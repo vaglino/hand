@@ -1,4 +1,4 @@
-# /train_model.py (Updated)
+# /train_model.py (Massively Improved)
 
 import json
 import numpy as np
@@ -11,9 +11,22 @@ import joblib
 import os
 import sys
 
+# --- HYPERPARAMETERS ---
+SEQUENCE_LENGTH = 30 # Must match recorder
+NUM_LANDMARKS = 21
+# !NEW! Features: pos(3), vel(3), accel(3) -> 9 per landmark
+INPUT_SIZE = NUM_LANDMARKS * 9 
+HIDDEN_SIZE = 128
+NUM_LAYERS = 2
+DROPOUT = 0.4 # Increased dropout for better generalization
+EPOCHS = 70 # Can use fewer epochs with better features
+BATCH_SIZE = 32
+LEARNING_RATE = 0.0005
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
+# --- MODEL DEFINITION (Same as before) ---
 class GestureLSTM(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers, num_classes, dropout=0.2):
         super().__init__()
@@ -24,15 +37,65 @@ class GestureLSTM(nn.Module):
         out, _ = self.lstm(x)
         return self.fc(out[:, -1, :])
 
+# --- FEATURE ENGINEERING (The secret sauce) ---
+def create_features_for_sequence(seq_landmarks):
+    """
+    Creates robust features (pos, vel, accel) for a single sequence.
+    This function is now the single source of truth for feature creation.
+    """
+    seq_landmarks = np.array(seq_landmarks) # Shape: (L, 21, 3)
+    
+    # 1. Wrist-relative coordinates (translation invariance)
+    wrist = seq_landmarks[:, 0, :] # wrist is landmark 0
+    relative_coords = seq_landmarks - wrist[:, np.newaxis, :]
+    
+    # 2. Scale normalization (scale invariance)
+    # Use distance between wrist(0) and middle_finger_mcp(9) as hand "size"
+    hand_size = np.linalg.norm(relative_coords[:, 9, :], axis=1)
+    # Avoid division by zero if hand size is somehow 0
+    hand_size[hand_size < 1e-6] = 1 
+    scaled_coords = relative_coords / hand_size[:, np.newaxis, np.newaxis]
+    
+    # 3. Temporal features (velocity and acceleration)
+    # Prepend first element to keep array dimensions consistent after diff
+    velocity = np.diff(scaled_coords, axis=0, prepend=scaled_coords[0:1, :, :])
+    acceleration = np.diff(velocity, axis=0, prepend=velocity[0:1, :, :])
+    
+    # 4. Flatten and combine
+    pos_features = scaled_coords.reshape(SEQUENCE_LENGTH, -1)
+    vel_features = velocity.reshape(SEQUENCE_LENGTH, -1)
+    accel_features = acceleration.reshape(SEQUENCE_LENGTH, -1)
+    
+    return np.concatenate([pos_features, vel_features, accel_features], axis=1)
+
+# --- DATASET and AUGMENTATION ---
 def augment_sequence(sequence):
-    noise = np.random.normal(0, 0.003, sequence.shape).astype(np.float32)
-    augmented_seq = sequence + noise
-    angle = np.random.uniform(-np.pi / 18, np.pi / 18)
-    cos, sin = np.cos(angle), np.sin(angle)
-    rotation_matrix = np.array([[cos, -sin], [sin, cos]], dtype=np.float32)
-    reshaped_seq = augmented_seq.reshape(augmented_seq.shape[0], -1, 2)
+    """Augments the position part of the feature vector."""
+    num_coords = NUM_LANDMARKS * 3
+    pos_data = sequence[:, :num_coords]
+    
+    # Add small noise
+    noise = np.random.normal(0, 0.01, pos_data.shape).astype(np.float32)
+    augmented_seq = pos_data + noise
+    
+    # Reshape back to (L, 21, 3) for rotation
+    reshaped_seq = augmented_seq.reshape(SEQUENCE_LENGTH, -1, 3)
+    
+    # Apply a small random 3D rotation
+    angle_x = np.random.uniform(-np.pi / 12, np.pi / 12)
+    angle_y = np.random.uniform(-np.pi / 12, np.pi / 12)
+    angle_z = np.random.uniform(-np.pi / 12, np.pi / 12)
+    Rx = np.array([[1,0,0], [0,np.cos(angle_x),-np.sin(angle_x)], [0,np.sin(angle_x),np.cos(angle_x)]])
+    Ry = np.array([[np.cos(angle_y),0,np.sin(angle_y)], [0,1,0], [-np.sin(angle_y),0,np.cos(angle_y)]])
+    Rz = np.array([[np.cos(angle_z),-np.sin(angle_z),0], [np.sin(angle_z),np.cos(angle_z),0], [0,0,1]])
+    rotation_matrix = Rz @ Ry @ Rx
+    
     rotated_seq = np.dot(reshaped_seq, rotation_matrix.T)
-    return rotated_seq.reshape(augmented_seq.shape[0], -1)
+    
+    # Combine augmented pos data with original vel/accel data
+    aug_pos_flat = rotated_seq.reshape(SEQUENCE_LENGTH, -1)
+    vel_accel_data = sequence[:, num_coords:]
+    return np.concatenate([aug_pos_flat, vel_accel_data], axis=1)
 
 class GestureDataset(Dataset):
     def __init__(self, sequences, labels, augment=False):
@@ -40,60 +103,39 @@ class GestureDataset(Dataset):
         self.labels = torch.LongTensor(labels)
         self.augment = augment
     
-    def __len__(self):
-        return len(self.sequences)
+    def __len__(self): return len(self.sequences)
     
     def __getitem__(self, idx):
         sequence = self.sequences[idx].numpy()
         if self.augment:
-            num_coords = sequence.shape[1] // 2
-            pos_data = sequence[:, :num_coords]
-            vel_data = sequence[:, num_coords:]
-            aug_pos_data = augment_sequence(pos_data)
-            sequence = np.concatenate([aug_pos_data, vel_data], axis=1)
+            sequence = augment_sequence(sequence)
         return torch.FloatTensor(sequence), self.labels[idx]
 
-def create_features(raw_data):
-    X, y = [], []
-    for gesture, sequences in raw_data.items():
-        for seq in sequences:
-            landmarks = np.array(seq)
-            wrist_pos = landmarks[:, 0:2]
-            landmarks_reshaped = landmarks.reshape(landmarks.shape[0], -1, 2)
-            normalized_landmarks = landmarks_reshaped - wrist_pos[:, np.newaxis, :]
-            velocity = np.diff(normalized_landmarks, axis=0, prepend=normalized_landmarks[0:1])
-            pos_features = normalized_landmarks.reshape(landmarks.shape[0], -1)
-            vel_features = velocity.reshape(landmarks.shape[0], -1)
-            feature_vector = np.concatenate([pos_features, vel_features], axis=1)
-            X.append(feature_vector)
-            y.append(gesture)
-    return np.array(X), np.array(y)
-
+# --- MAIN TRAINING SCRIPT ---
 def train():
-    # --- HYPERPARAMETERS ---
-    # !CHANGE! Updated sequence length to 50
-    SEQUENCE_LENGTH = 50 
-    INPUT_SIZE_FACTOR = 4
-    NUM_LANDMARKS = 21
-    INPUT_SIZE = NUM_LANDMARKS * INPUT_SIZE_FACTOR
-    HIDDEN_SIZE = 128
-    NUM_LAYERS = 2
-    DROPOUT = 0.3
-    EPOCHS = 150
-    BATCH_SIZE = 32
-    LEARNING_RATE = 0.0005
-
     print("Loading and processing data...")
     with open('gesture_data/sequences.json', 'r') as f:
         raw_data = json.load(f)
 
-    # Filter out empty gesture lists before processing
     filtered_data = {k: v for k, v in raw_data.items() if v}
     if not filtered_data:
-        print("No gesture data found in sequences.json. Please record gestures first.")
+        print("Error: No gesture data found. Please run gesture_recorder.py first.")
         sys.exit(1)
 
-    X, y = create_features(filtered_data)
+    X, y = [], []
+    for gesture, sequences in filtered_data.items():
+        for seq in sequences:
+            # Check for data integrity
+            if len(seq) == SEQUENCE_LENGTH:
+                feature_vector = create_features_for_sequence(seq)
+                X.append(feature_vector)
+                y.append(gesture)
+
+    if not X:
+        print("Error: Could not process any sequences. Check data format.")
+        sys.exit(1)
+
+    X = np.array(X)
     print(f"Total sequences: {len(X)}")
     print(f"Feature vector shape: {X.shape}")
 
@@ -103,7 +145,8 @@ def train():
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y_encoded, test_size=0.2, random_state=42, stratify=y_encoded)
-
+    
+    # Scale the data based on the training set
     scaler = StandardScaler()
     X_train_flat = X_train.reshape(-1, X_train.shape[-1])
     scaler.fit(X_train_flat)
@@ -125,7 +168,6 @@ def train():
     best_acc = 0.0
     for epoch in range(EPOCHS):
         model.train()
-        total_loss = 0
         for sequences, labels in train_loader:
             sequences, labels = sequences.to(device), labels.to(device)
             optimizer.zero_grad()
@@ -133,8 +175,8 @@ def train():
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
-            total_loss += loss.item()
-
+        
+        # Evaluation
         model.eval()
         correct, total = 0, 0
         with torch.no_grad():
@@ -146,8 +188,8 @@ def train():
                 correct += (predicted == labels).sum().item()
         
         acc = 100 * correct / total
-        if epoch % 10 == 0 or epoch == EPOCHS - 1:
-            print(f'Epoch [{epoch+1}/{EPOCHS}], Loss: {total_loss/len(train_loader):.4f}, Test Accuracy: {acc:.2f}%')
+        if (epoch + 1) % 10 == 0 or epoch == EPOCHS - 1:
+            print(f'Epoch [{epoch+1}/{EPOCHS}], Test Accuracy: {acc:.2f}%')
             
         if acc > best_acc:
             best_acc = acc
@@ -164,10 +206,10 @@ def train():
             joblib.dump(label_encoder, 'gesture_data/label_encoder.pkl')
 
     print(f'\nBest Test Accuracy: {best_acc:.2f}%')
-    print("\n✓ Model and preprocessing saved!")
+    print("✓ Model and preprocessing objects saved!")
 
 if __name__ == "__main__":
     if not os.path.exists('gesture_data/sequences.json'):
-        print("No data found! Run gesture_recorder.py first.")
+        print("Error: sequences.json not found. Run gesture_recorder.py first.")
         sys.exit(1)
     train()
