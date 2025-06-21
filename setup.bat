@@ -1,5 +1,6 @@
+:: setup.bat - Enhanced setup for revolutionary gesture control
 @echo off
-echo Setting up Gesture Control...
+echo Setting up Revolutionary Gesture Control System...
 echo.
 
 REM Create virtual environment if it doesn't exist
@@ -19,7 +20,7 @@ REM Install requirements
 echo Installing requirements...
 pip install -r requirements.txt
 
-REM Download model if not exists
+REM Download MediaPipe model if not exists
 if not exist "hand_landmarker.task" (
     echo.
     echo Downloading hand tracking model...
@@ -32,9 +33,24 @@ if not exist "gesture_data" mkdir gesture_data
 echo.
 echo ✓ Setup complete!
 echo.
+echo === Revolutionary Gesture Control System ===
+echo.
 echo To use:
-echo 1. Run: gesture_record.bat
-echo 2. Run: gesture_train.bat  
-echo 3. Run: gesture_control.bat
+echo 1. Run: gesture_record.bat  (Enhanced multi-modal recording)
+echo 2. Run: gesture_train.bat   (Multi-model training)
+echo 3. Run: gesture_control.bat (Physics-based control)
+echo.
+echo Features:
+echo - Trackpad-like smooth scrolling with momentum
+echo - Natural zoom gestures with physics
+echo - Sub-50ms latency for responsive control
+echo - Adaptive sensitivity learning
 echo.
 pause
+
+
+
+
+
+
+

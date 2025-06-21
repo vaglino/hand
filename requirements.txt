@@ -1,15 +1,24 @@
-# Core requirements
+# Core requirements for Revolutionary Gesture Control
 mediapipe>=0.10.0
 opencv-python>=4.8.0
 numpy>=1.24.0
 scikit-learn>=1.3.0
 pyautogui>=0.9.54
 joblib>=1.3.0
-scipy>=1.10.0
 
-# PyTorch for deep learning
+# Deep learning
 torch>=2.0.0
 torchvision>=0.15.0
 
-# Note: For GPU support with PyTorch, you may need to install a specific version
+# Scientific computing
+scipy>=1.10.0  # For signal processing and smoothing
+
+# Additional requirements for enhanced features
+matplotlib>=3.7.0  # For debugging and visualization (optional)
+pandas>=2.0.0  # For data analysis (optional)
+
+# Performance optimization
+numba>=0.57.0  # For JIT compilation of critical paths (optional)
+
+# Note: For GPU support with PyTorch, install CUDA-enabled version:
 # Visit https://pytorch.org/get-started/locally/ for instructions
