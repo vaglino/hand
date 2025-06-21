@@ -10,15 +10,26 @@ import json
 import os
 from mediapipe.framework.formats import landmark_pb2
 
-# !CHANGE! Shorter sequence for better responsiveness
-SEQUENCE_LENGTH = 30
+STATE_SEQUENCE_LENGTH = 12  # shorter sequences for gesture state detection
+MOTION_WINDOW = 40          # longer window for continuous motion capture
 
 class GestureRecorder:
-    def __init__(self, model_path='hand_landmarker.task', sequence_length=SEQUENCE_LENGTH):
+    def __init__(self, model_path='hand_landmarker.task',
+                 state_sequence_length=STATE_SEQUENCE_LENGTH,
+                 motion_window=MOTION_WINDOW):
         self.results = None
-        self.sequence_length = sequence_length
+        self.state_sequence_length = state_sequence_length
+        self.motion_window = motion_window
         self.current_sequence = []
-        self.gesture_data = {g: [] for g in ['scroll_up', 'scroll_down', 'zoom_in', 'zoom_out', 'neutral']}
+        self.motion_buffer = []
+        self.motion_recording = False
+        self.motion_label = None
+        gestures = ['scroll_up', 'scroll_down', 'zoom_in', 'zoom_out', 'neutral']
+        self.data = {
+            'gesture_states': {g: [] for g in gestures},
+            'motion_streams': {g: {'sequences': [], 'intensities': [], 'velocities': []}
+                               for g in gestures if g != 'neutral'}
+        }
         
         base_opts = python.BaseOptions(model_asset_path=model_path)
         opts = vision.HandLandmarkerOptions(
@@ -47,10 +58,10 @@ class GestureRecorder:
             txt = f"Show hand to record '{recording_label.upper()}'"
             color = (0, 255, 255)
         elif recording_label:
-            txt = f"Recording {recording_label.upper()}: {progress}/{self.sequence_length}"
+            txt = f"Recording {recording_label.upper()}: {progress}/{self.state_sequence_length}"
             color = (0, 0, 255)
             # Progress bar
-            bar_width = int((progress / self.sequence_length) * w)
+            bar_width = int((progress / self.state_sequence_length) * w)
             cv2.rectangle(frame, (0, 36), (bar_width, 40), color, -1)
         else:
             txt = "KEYS: [1-5] Record | [S] Save | [Q] Quit"
@@ -59,7 +70,7 @@ class GestureRecorder:
         
         # Side panel for sample counts
         y = 60
-        for i, (g, seqs) in enumerate(self.gesture_data.items()):
+        for i, (g, seqs) in enumerate(self.data['gesture_states'].items()):
             key_num = i + 1
             cv2.putText(frame, f"[{key_num}] {g}: {len(seqs)} samples", (10, y), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
@@ -68,11 +79,11 @@ class GestureRecorder:
 
     def save_data(self):
         os.makedirs('gesture_data', exist_ok=True)
-        out_path = 'gesture_data/sequences.json'
+        out_path = 'gesture_data/dataset.json'
         with open(out_path, 'w') as f:
-            json.dump(self.gesture_data, f, indent=2)
+            json.dump(self.data, f, indent=2)
         print(f"\n✓ Data saved to {out_path}!")
-        for g, seqs in self.gesture_data.items():
+        for g, seqs in self.data['gesture_states'].items():
             print(f"  {g}: {len(seqs)} sequences")
 
     def run(self):
@@ -81,8 +92,9 @@ class GestureRecorder:
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
         print("\n=== Gesture Recorder ===")
-        print(f"Will record {self.sequence_length} frames per gesture.")
+        print(f"Will record {self.state_sequence_length} frames per gesture.")
         print("1: scroll_up | 2: scroll_down | 3: zoom_in | 4: zoom_out | 5: neutral")
+        print("U/D/I/O: record motion for scroll_up/down/zoom_in/zoom_out")
         print("S: save | Q: quit\n")
         
         recording_label = None
@@ -117,13 +129,38 @@ class GestureRecorder:
                 elif last_known_landmarks is not None:
                     # Hand lost, pad with last known position
                     self.current_sequence.append(last_known_landmarks)
-                
-                if len(self.current_sequence) == self.sequence_length:
-                    self.gesture_data[recording_label].append(self.current_sequence)
-                    print(f"\n✓ Recorded '{recording_label}' sample ({self.sequence_length} frames). Ready for next.")
+
+                if len(self.current_sequence) == self.state_sequence_length:
+                    self.data['gesture_states'][recording_label].append(self.current_sequence)
+                    print(f"\n✓ Recorded '{recording_label}' sample ({self.state_sequence_length} frames). Ready for next.")
                     recording_label = None
                     self.current_sequence = []
                     last_known_landmarks = None
+
+            elif self.motion_recording:
+                if hand_is_visible:
+                    landmarks = self.results.hand_landmarks[0]
+                    coords = self.extract_landmarks(landmarks)
+                    self.motion_buffer.append(coords)
+                    last_known_landmarks = coords
+                elif last_known_landmarks is not None:
+                    self.motion_buffer.append(last_known_landmarks)
+
+                if len(self.motion_buffer) >= self.motion_window:
+                    # simple velocity estimation using wrist landmark
+                    velocities = []
+                    for i in range(1, len(self.motion_buffer)):
+                        prev = self.motion_buffer[i-1][0]
+                        curr = self.motion_buffer[i][0]
+                        velocities.append((curr[0]-prev[0], curr[1]-prev[1]))
+                    intensities = [np.linalg.norm(v) for v in velocities]
+                    mean_int = float(np.mean(intensities)) if intensities else 0.0
+                    self.data['motion_streams'][self.motion_label]['sequences'].append(self.motion_buffer)
+                    self.data['motion_streams'][self.motion_label]['intensities'].append(mean_int)
+                    self.data['motion_streams'][self.motion_label]['velocities'].append(velocities)
+                    print(f"\n✓ Recorded motion sample for {self.motion_label}.")
+                    self.motion_buffer = []
+                    self.motion_recording = False
 
             if hand_is_visible:
                 for hand_landmarks in self.results.hand_landmarks:
@@ -144,8 +181,9 @@ class GestureRecorder:
                 break
             elif key == ord('s'):
                 self.save_data()
-            elif not recording_label and not waiting_for_hand:
+            elif not recording_label and not waiting_for_hand and not self.motion_recording:
                 key_map = {'1': 'scroll_up', '2': 'scroll_down', '3': 'zoom_in', '4': 'zoom_out', '5': 'neutral'}
+                motion_map = {'u': 'scroll_up', 'd': 'scroll_down', 'i': 'zoom_in', 'o': 'zoom_out'}
                 char_key = chr(key) if key != 255 else None
                 if char_key in key_map:
                     recording_label = key_map[char_key]
@@ -153,6 +191,12 @@ class GestureRecorder:
                     self.current_sequence = []
                     last_known_landmarks = None
                     print(f"\nPressed '{char_key}'. Prepared for '{recording_label}'. Show your hand.")
+                elif char_key in motion_map:
+                    self.motion_label = motion_map[char_key]
+                    self.motion_recording = True
+                    self.motion_buffer = []
+                    last_known_landmarks = None
+                    print(f"\nRecording continuous motion for '{self.motion_label}'.")
 
         cap.release()
         cv2.destroyAllWindows()
