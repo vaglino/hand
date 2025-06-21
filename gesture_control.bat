@@ -1,7 +1,7 @@
 @echo off
 call venv\Scripts\activate.bat
 echo.
-echo === Gesture Control Running ===
+echo === Gesture Control (Trackpad Mode) ===
 echo.
 echo Controls:
 echo - Swipe UP: Scroll up
