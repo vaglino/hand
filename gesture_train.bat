@@ -2,18 +2,21 @@
 @echo off
 call venv\Scripts\activate.bat
 echo.
-echo === Multi-Model Training System ===
+echo === Enhanced Model Training ===
 echo.
-echo Training models:
-echo 1. Lightweight gesture classifier (CNN/Random Forest)
-echo 2. Motion intensity predictor
-echo 3. User adaptation model
+echo Training transition-aware model that understands:
+echo - Gesture transitions and return movements
+echo - Motion intention detection
+echo - Temporal context from previous gestures
 echo.
-echo This may take a few minutes...
+echo This may take 5-10 minutes...
 echo.
 python train_model.py
 echo.
-echo Training complete! Check accuracy results above.
+echo Training complete! 
+echo.
+echo The model now understands transitions and won't misclassify
+echo return movements as opposite gestures.
 echo.
 pause
 deactivate

@@ -2,20 +2,17 @@
 @echo off
 call venv\Scripts\activate.bat
 echo.
-echo === Revolutionary Gesture Control ===
+echo === Enhanced Gesture Control ===
 echo.
-echo Experience trackpad-like control with your hands!
+echo Starting gesture control with transition awareness...
 echo.
-echo Controls:
-echo - Swipe gestures for smooth scrolling
-echo - Pinch/spread for natural zooming
-echo - Physics-based momentum and deceleration
-echo - [R] Reset physics
-echo - [+/-] Adjust sensitivity
-echo - [Q] Quit
+echo IMPROVEMENTS:
+echo - No more false triggers on return movements
+echo - Smoother, more natural control
+echo - Better intention detection
+echo - Context-aware gesture recognition
 echo.
-echo Starting in 3 seconds...
-timeout /t 3 /nobreak > nul
+echo Make sure you've trained the enhanced model first!
 echo.
 python gesture_control.py
 deactivate

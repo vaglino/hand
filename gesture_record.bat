@@ -4,19 +4,22 @@ call venv\Scripts\activate.bat
 echo.
 echo === Enhanced Gesture Recorder ===
 echo.
-echo NEW FEATURES:
-echo - Dual recording modes (Gesture + Motion)
-echo - Real-time motion intensity visualization
-echo - Continuous motion tracking
-echo - Gesture transition detection
+echo This recorder captures continuous gesture sequences with transitions.
 echo.
-echo Instructions:
-echo - [G] Gesture mode - Quick classification samples
-echo - [M] Motion mode - Continuous motion recording
-echo - [1-7] Record gestures/motion types
-echo - [I] Change intensity setting
-echo - [S] Save all data
-echo - [Q] Quit
+echo RECORDING MODES:
+echo - Press 1-7: Guided recording (with timing cues)
+echo - Press Shift+1-7: Freestyle recording (your own pace)
+echo.
+echo GESTURES:
+echo [1] Scroll Up    [2] Scroll Down
+echo [3] Scroll Left  [4] Scroll Right  
+echo [5] Zoom In      [6] Zoom Out
+echo [7] Neutral
+echo.
+echo TIPS:
+echo - Follow the visual guides in guided mode
+echo - Perform each gesture 5 times with returns to neutral
+echo - The system will learn the transition patterns
 echo.
 python gesture_recorder.py
 deactivate

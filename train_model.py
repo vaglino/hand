@@ -1,554 +1,435 @@
-# train_model.py - Multi-model training pipeline for hybrid gesture control
+# enhanced_train_model.py - Training script for transition-aware gesture recognition
 
 import json
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader, TensorDataset
+from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder, StandardScaler, RobustScaler
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 import joblib
 import os
-import sys
-from typing import List, Dict, Tuple, Optional
+from typing import Dict, List, Tuple
 import warnings
 warnings.filterwarnings('ignore')
 
-# Configuration
-GESTURE_SEQUENCE_LENGTH = 15
-NUM_LANDMARKS = 21
-FEATURE_DIM = NUM_LANDMARKS * 9  # pos(3) + vel(3) + accel(3)
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# Import the transition-aware model
+from transition_aware_model import TransitionAwareLSTM
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
-# ============== Feature Engineering ==============
-
-class AdvancedFeatureExtractor:
-    """Extract robust features for both gesture classification and motion prediction"""
+class TransitionAwareDataset(Dataset):
+    """Dataset that includes transition phases and context"""
     
-    def __init__(self):
-        self.hand_size_percentile = 50
-        self.rotation_reference = None
+    def __init__(self, sequences, labels, phases, contexts, label_encoder, context_encoder):
+        self.sequences = torch.FloatTensor(sequences)
+        self.labels = torch.LongTensor(labels)
+        self.phases = phases
+        self.contexts = torch.LongTensor(contexts)
+        self.label_encoder = label_encoder
+        self.context_encoder = context_encoder
         
-    def extract_gesture_features(self, sequence: List[List[List[float]]]) -> np.ndarray:
-        """Extract features for gesture classification (lightweight)"""
-        sequence = np.array(sequence)  # Shape: (T, 21, 3)
-        
-        # Normalize to wrist-relative coordinates
-        wrist = sequence[:, 0, :]
-        relative_coords = sequence - wrist[:, np.newaxis, :]
-        
-        # Robust hand size estimation
-        hand_sizes = []
-        for t in range(len(sequence)):
-            # Use multiple landmark pairs for robustness
-            distances = [
-                np.linalg.norm(relative_coords[t, 9] - relative_coords[t, 0]),  # Middle MCP to wrist
-                np.linalg.norm(relative_coords[t, 5] - relative_coords[t, 0]),  # Index MCP to wrist
-                np.linalg.norm(relative_coords[t, 17] - relative_coords[t, 0]), # Pinky MCP to wrist
-            ]
-            hand_sizes.append(np.median(distances))
-        
-        # Use median hand size for normalization
-        median_hand_size = np.median(hand_sizes)
-        if median_hand_size < 1e-6:
-            median_hand_size = 1.0
-            
-        scaled_coords = relative_coords / median_hand_size
-        
-        # Temporal features
-        velocity = np.diff(scaled_coords, axis=0, prepend=scaled_coords[0:1])
-        acceleration = np.diff(velocity, axis=0, prepend=velocity[0:1])
-        
-        # Additional gesture-specific features
-        features_per_frame = []
-        
-        for t in range(len(sequence)):
-            frame_features = []
-            
-            # Basic coordinates, velocity, acceleration
-            frame_features.extend(scaled_coords[t].flatten())
-            frame_features.extend(velocity[t].flatten())
-            frame_features.extend(acceleration[t].flatten())
-            
-            # Finger spread
-            fingertips = [4, 8, 12, 16, 20]
-            spreads = []
-            for i in range(len(fingertips)):
-                for j in range(i+1, len(fingertips)):
-                    dist = np.linalg.norm(scaled_coords[t, fingertips[i]] - scaled_coords[t, fingertips[j]])
-                    spreads.append(dist)
-            frame_features.append(np.mean(spreads))
-            frame_features.append(np.std(spreads))
-            
-            # Palm orientation (using cross product of palm vectors)
-            palm_vec1 = scaled_coords[t, 5] - scaled_coords[t, 0]   # Index MCP to wrist
-            palm_vec2 = scaled_coords[t, 17] - scaled_coords[t, 0]  # Pinky MCP to wrist
-            palm_normal = np.cross(palm_vec1, palm_vec2)
-            palm_normal = palm_normal / (np.linalg.norm(palm_normal) + 1e-6)
-            frame_features.extend(palm_normal)
-            
-            # Hand openness (average finger extension)
-            finger_bases = [1, 5, 9, 13, 17]  # MCPs
-            finger_tips = [4, 8, 12, 16, 20]   # Tips
-            extensions = []
-            for base, tip in zip(finger_bases, finger_tips):
-                extension = np.linalg.norm(scaled_coords[t, tip] - scaled_coords[t, base])
-                extensions.append(extension)
-            frame_features.append(np.mean(extensions))
-            
-            features_per_frame.append(frame_features)
-        
-        # Flatten all features
-        return np.array(features_per_frame).flatten()
+    def __len__(self):
+        return len(self.sequences)
     
-    def extract_motion_features(self, landmarks_sequence: List[List[List[float]]], 
-                              motion_data: Optional[Dict] = None) -> Dict[str, np.ndarray]:
-        """Extract continuous motion features for physics prediction"""
-        sequence = np.array(landmarks_sequence)
-        
-        if len(sequence) < 2:
-            return {
-                'velocity_x': np.array([0.0]),
-                'velocity_y': np.array([0.0]),
-                'acceleration_x': np.array([0.0]),
-                'acceleration_y': np.array([0.0]),
-                'zoom_rate': np.array([0.0]),
-                'smoothness': np.array([1.0]),
-                'confidence': np.array([1.0])
-            }
-        
-        # Palm center tracking
-        palm_indices = [0, 5, 9, 13, 17]
-        palm_centers = np.mean(sequence[:, palm_indices], axis=1)
-        
-        # Velocity calculation with smoothing
-        velocities = np.diff(palm_centers, axis=0) * 30  # Assuming 30 FPS
-        
-        # Apply Gaussian smoothing for more stable velocity
-        from scipy.ndimage import gaussian_filter1d
-        smooth_velocities = gaussian_filter1d(velocities, sigma=1.0, axis=0)
-        
-        # Acceleration
-        accelerations = np.diff(smooth_velocities, axis=0) * 30
-        
-        # Zoom rate from finger spread
-        finger_spreads = []
-        for t in range(len(sequence)):
-            fingertips = [4, 8, 12, 16, 20]
-            distances = []
-            for i in range(len(fingertips)):
-                for j in range(i+1, len(fingertips)):
-                    dist = np.linalg.norm(sequence[t, fingertips[i]] - sequence[t, fingertips[j]])
-                    distances.append(dist)
-            finger_spreads.append(np.mean(distances))
-        
-        finger_spreads = np.array(finger_spreads)
-        zoom_rates = np.diff(finger_spreads) * 30
-        
-        # Motion smoothness (lower jerk = smoother)
-        if len(accelerations) > 0:
-            jerk = np.diff(accelerations, axis=0)
-            smoothness = 1.0 / (1.0 + np.std(np.linalg.norm(jerk, axis=1)))
-        else:
-            smoothness = 1.0
-        
-        # Confidence based on motion consistency
-        if len(velocities) > 2:
-            velocity_variance = np.std(np.linalg.norm(velocities, axis=1))
-            confidence = np.exp(-velocity_variance)
-        else:
-            confidence = 1.0
-        
-        # Pad arrays to same length
-        max_len = len(sequence) - 1
-        
+    def __getitem__(self, idx):
         return {
-            'velocity_x': self._pad_array(smooth_velocities[:, 0], max_len),
-            'velocity_y': self._pad_array(smooth_velocities[:, 1], max_len),
-            'acceleration_x': self._pad_array(accelerations[:, 0] if len(accelerations) > 0 else np.array([0]), max_len),
-            'acceleration_y': self._pad_array(accelerations[:, 1] if len(accelerations) > 0 else np.array([0]), max_len),
-            'zoom_rate': self._pad_array(zoom_rates, max_len),
-            'smoothness': np.full(max_len, smoothness),
-            'confidence': np.full(max_len, confidence)
-        }
-    
-    def _pad_array(self, arr: np.ndarray, target_length: int) -> np.ndarray:
-        """Pad array to target length"""
-        if len(arr) >= target_length:
-            return arr[:target_length]
-        else:
-            return np.pad(arr, (0, target_length - len(arr)), mode='edge')
-
-# ============== Models ==============
-
-class LightweightGestureNet(nn.Module):
-    """Fast CNN for gesture classification"""
-    def __init__(self, input_size, num_classes, dropout=0.3):
-        super().__init__()
-        
-        # 1D CNN for temporal patterns
-        self.conv1 = nn.Conv1d(input_size // GESTURE_SEQUENCE_LENGTH, 64, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm1d(64)
-        self.conv2 = nn.Conv1d(64, 128, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm1d(128)
-        self.conv3 = nn.Conv1d(128, 256, kernel_size=3, padding=1)
-        self.bn3 = nn.BatchNorm1d(256)
-        
-        # Global pooling and classification
-        self.global_pool = nn.AdaptiveAvgPool1d(1)
-        self.dropout = nn.Dropout(dropout)
-        self.fc1 = nn.Linear(256, 128)
-        self.fc2 = nn.Linear(128, num_classes)
-        
-    def forward(self, x):
-        # Reshape for 1D CNN: (batch, features_per_frame, sequence_length)
-        batch_size = x.shape[0]
-        x = x.view(batch_size, -1, GESTURE_SEQUENCE_LENGTH)
-        
-        # CNN layers
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = F.relu(self.bn2(self.conv2(x)))
-        x = F.relu(self.bn3(self.conv3(x)))
-        
-        # Global pooling
-        x = self.global_pool(x).squeeze(-1)
-        
-        # Classification
-        x = self.dropout(x)
-        x = F.relu(self.fc1(x))
-        x = self.dropout(x)
-        x = self.fc2(x)
-        
-        return x
-
-class MotionIntensityNet(nn.Module):
-    """Network for predicting continuous motion parameters"""
-    def __init__(self, input_size, hidden_size=64):
-        super().__init__()
-        
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers=2, 
-                           batch_first=True, bidirectional=True)
-        
-        # Separate heads for different motion parameters
-        self.velocity_head = nn.Linear(hidden_size * 2, 2)  # x, y velocity scale
-        self.zoom_head = nn.Linear(hidden_size * 2, 1)     # zoom intensity
-        self.confidence_head = nn.Linear(hidden_size * 2, 1)  # motion confidence
-        
-    def forward(self, x):
-        # x shape: (batch, sequence, features)
-        lstm_out, _ = self.lstm(x)
-        
-        # Use last timestep output
-        last_output = lstm_out[:, -1, :]
-        
-        velocity = self.velocity_head(last_output)
-        zoom = self.zoom_head(last_output)
-        confidence = torch.sigmoid(self.confidence_head(last_output))
-        
-        return {
-            'velocity': velocity,
-            'zoom': zoom,
-            'confidence': confidence
+            'sequence': self.sequences[idx],
+            'label': self.labels[idx],
+            'context': self.contexts[idx],
+            'phases': self.phases[idx]
         }
 
-# ============== Training Functions ==============
-
-def train_gesture_classifier(X_train, y_train, X_test, y_test, epochs=50):
-    """Train lightweight gesture classifier"""
-    print("\n=== Training Gesture Classifier ===")
+def extract_enhanced_features(landmarks_sequence):
+    """Extract features that capture transition dynamics"""
+    sequence = np.array(landmarks_sequence)
+    features = []
     
-    # Convert to tensors
-    X_train_tensor = torch.FloatTensor(X_train)
-    y_train_tensor = torch.LongTensor(y_train)
-    X_test_tensor = torch.FloatTensor(X_test)
-    y_test_tensor = torch.LongTensor(y_test)
+    for t in range(len(sequence)):
+        frame_features = []
+        
+        # Basic position features (normalized to wrist)
+        wrist = sequence[t][0]
+        relative_positions = sequence[t] - wrist
+        frame_features.extend(relative_positions.flatten())
+        
+        # Velocity features
+        if t > 0:
+            velocity = sequence[t] - sequence[t-1]
+            frame_features.extend(velocity.flatten())
+        else:
+            frame_features.extend(np.zeros(21 * 3))
+        
+        # Acceleration features
+        if t > 1:
+            acceleration = (sequence[t] - sequence[t-1]) - (sequence[t-1] - sequence[t-2])
+            frame_features.extend(acceleration.flatten())
+        else:
+            frame_features.extend(np.zeros(21 * 3))
+        
+        # Hand configuration features
+        # Finger spread
+        fingertips = [4, 8, 12, 16, 20]
+        spreads = []
+        for i in range(len(fingertips)):
+            for j in range(i+1, len(fingertips)):
+                dist = np.linalg.norm(relative_positions[fingertips[i]] - relative_positions[fingertips[j]])
+                spreads.append(dist)
+        frame_features.extend(spreads)
+        
+        # Palm orientation
+        palm_vec1 = relative_positions[5] - relative_positions[0]
+        palm_vec2 = relative_positions[17] - relative_positions[0]
+        palm_normal = np.cross(palm_vec1, palm_vec2)
+        palm_normal = palm_normal / (np.linalg.norm(palm_normal) + 1e-6)
+        frame_features.extend(palm_normal)
+        
+        features.append(frame_features)
+    
+    return np.array(features)
+
+def create_transition_labels(labels, phases):
+    """Create refined labels that distinguish transitions"""
+    refined_labels = []
+    
+    for label, phase_seq in zip(labels, phases):
+        # Count phase occurrences
+        phase_counts = {}
+        for phase in phase_seq:
+            phase_counts[phase] = phase_counts.get(phase, 0) + 1
+        
+        # Determine refined label
+        dominant_phase = max(phase_counts, key=phase_counts.get)
+        
+        if '_transition' in label:
+            # Already a transition label
+            refined_labels.append(label)
+        elif dominant_phase in ['transitioning_to_gesture', 'transitioning_to_neutral']:
+            # Refine to transition label
+            base_gesture = label.replace('_transition', '')
+            refined_labels.append(f"{base_gesture}_transition")
+        else:
+            # Keep original label
+            refined_labels.append(label)
+    
+    return refined_labels
+
+def train_transition_aware_model(X_train, y_train, X_val, y_val, contexts_train, contexts_val, 
+                                num_epochs=100, batch_size=32):
+    """Train the transition-aware model"""
     
     # Create datasets
-    train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
-    test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
+    train_dataset = TransitionAwareDataset(
+        X_train, y_train, None, contexts_train, None, None
+    )
+    val_dataset = TransitionAwareDataset(
+        X_val, y_val, None, contexts_val, None, None
+    )
     
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=32)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size)
     
-    # Model
+    # Model parameters
+    input_size = X_train.shape[2]
     num_classes = len(np.unique(y_train))
-    model = LightweightGestureNet(X_train.shape[1], num_classes).to(device)
     
-    # Training setup
-    criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5)
+    # Initialize model
+    model = TransitionAwareLSTM(
+        input_size=input_size,
+        hidden_size=128,
+        num_layers=2,
+        num_classes=num_classes
+    ).to(device)
     
-    best_acc = 0.0
+    # Loss functions
+    gesture_criterion = nn.CrossEntropyLoss()
+    transition_criterion = nn.CrossEntropyLoss()
+    
+    # Optimizer
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=10, factor=0.5)
+    
+    # Training history
+    history = {
+        'train_loss': [], 'val_loss': [],
+        'train_acc': [], 'val_acc': []
+    }
+    
+    best_val_acc = 0
     best_model_state = None
+    patience_counter = 0
+    max_patience = 20
     
-    for epoch in range(epochs):
-        # Training
+    print("Starting training...")
+    
+    for epoch in range(num_epochs):
+        # Training phase
         model.train()
-        train_loss = 0.0
-        for inputs, labels in train_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
+        train_loss = 0
+        train_correct = 0
+        train_total = 0
+        
+        for batch in train_loader:
+            sequences = batch['sequence'].to(device)
+            labels = batch['label'].to(device)
+            contexts = batch['context'].to(device)
             
             optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            loss.backward()
+            
+            # Forward pass
+            outputs = model(sequences, contexts)
+            
+            # Calculate losses
+            gesture_loss = gesture_criterion(outputs['gesture'], labels)
+            
+            # For transition loss, create pseudo-labels based on gesture labels
+            # This is simplified - in practice, you'd have actual transition labels
+            transition_labels = (labels != 0).long()  # 0 = neutral, 1 = transitioning/active
+            transition_loss = transition_criterion(outputs['transition'], transition_labels)
+            
+            # Combined loss
+            total_loss = gesture_loss + 0.3 * transition_loss
+            
+            # Backward pass
+            total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             
-            train_loss += loss.item()
+            # Statistics
+            train_loss += total_loss.item()
+            _, predicted = torch.max(outputs['gesture'], 1)
+            train_total += labels.size(0)
+            train_correct += (predicted == labels).sum().item()
         
-        # Evaluation
+        # Validation phase
         model.eval()
-        correct = 0
-        total = 0
+        val_loss = 0
+        val_correct = 0
+        val_total = 0
+        
         with torch.no_grad():
-            for inputs, labels in test_loader:
-                inputs, labels = inputs.to(device), labels.to(device)
-                outputs = model(inputs)
-                _, predicted = torch.max(outputs, 1)
-                total += labels.size(0)
-                correct += (predicted == labels).sum().item()
+            for batch in val_loader:
+                sequences = batch['sequence'].to(device)
+                labels = batch['label'].to(device)
+                contexts = batch['context'].to(device)
+                
+                outputs = model(sequences, contexts)
+                
+                gesture_loss = gesture_criterion(outputs['gesture'], labels)
+                transition_labels = (labels != 0).long()
+                transition_loss = transition_criterion(outputs['transition'], transition_labels)
+                total_loss = gesture_loss + 0.3 * transition_loss
+                
+                val_loss += total_loss.item()
+                _, predicted = torch.max(outputs['gesture'], 1)
+                val_total += labels.size(0)
+                val_correct += (predicted == labels).sum().item()
         
-        accuracy = 100 * correct / total
-        avg_loss = train_loss / len(train_loader)
+        # Calculate metrics
+        train_acc = 100 * train_correct / train_total
+        val_acc = 100 * val_correct / val_total
+        avg_train_loss = train_loss / len(train_loader)
+        avg_val_loss = val_loss / len(val_loader)
         
-        scheduler.step(avg_loss)
+        # Update history
+        history['train_loss'].append(avg_train_loss)
+        history['val_loss'].append(avg_val_loss)
+        history['train_acc'].append(train_acc)
+        history['val_acc'].append(val_acc)
         
-        if accuracy > best_acc:
-            best_acc = accuracy
+        # Learning rate scheduling
+        scheduler.step(avg_val_loss)
+        
+        # Save best model
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
             best_model_state = model.state_dict().copy()
+            patience_counter = 0
+        else:
+            patience_counter += 1
         
+        # Print progress
         if (epoch + 1) % 10 == 0:
-            print(f"Epoch [{epoch+1}/{epochs}], Loss: {avg_loss:.4f}, Accuracy: {accuracy:.2f}%")
-    
-    print(f"Best Accuracy: {best_acc:.2f}%")
+            print(f"Epoch [{epoch+1}/{num_epochs}]")
+            print(f"  Train Loss: {avg_train_loss:.4f}, Train Acc: {train_acc:.2f}%")
+            print(f"  Val Loss: {avg_val_loss:.4f}, Val Acc: {val_acc:.2f}%")
+        
+        # Early stopping
+        if patience_counter >= max_patience:
+            print(f"Early stopping at epoch {epoch+1}")
+            break
     
     # Restore best model
     model.load_state_dict(best_model_state)
     
-    return model, best_acc
+    return model, history, best_val_acc
 
-def train_random_forest_classifier(X_train, y_train, X_test, y_test):
-    """Train Random Forest as alternative fast classifier"""
-    print("\n=== Training Random Forest Classifier ===")
+def analyze_transition_patterns(data):
+    """Analyze transition patterns in the data"""
+    print("\n=== Analyzing Transition Patterns ===")
     
-    rf = RandomForestClassifier(
-        n_estimators=100,
-        max_depth=10,
-        min_samples_split=5,
-        n_jobs=-1,
-        random_state=42
-    )
+    transition_matrix = {}
     
-    rf.fit(X_train, y_train)
+    for i in range(len(data['labels']) - 1):
+        current = data['labels'][i]
+        next_label = data['labels'][i + 1]
+        
+        if current not in transition_matrix:
+            transition_matrix[current] = {}
+        
+        if next_label not in transition_matrix[current]:
+            transition_matrix[current][next_label] = 0
+        
+        transition_matrix[current][next_label] += 1
     
-    # Evaluate
-    train_acc = rf.score(X_train, y_train) * 100
-    test_acc = rf.score(X_test, y_test) * 100
+    # Print common transitions
+    print("\nMost common transitions:")
+    transitions = []
+    for from_gesture, to_gestures in transition_matrix.items():
+        for to_gesture, count in to_gestures.items():
+            if count > 10:  # Only show frequent transitions
+                transitions.append((from_gesture, to_gesture, count))
     
-    print(f"Train Accuracy: {train_acc:.2f}%")
-    print(f"Test Accuracy: {test_acc:.2f}%")
+    transitions.sort(key=lambda x: x[2], reverse=True)
+    for from_g, to_g, count in transitions[:10]:
+        print(f"  {from_g} → {to_g}: {count} times")
     
-    return rf, test_acc
-
-def train_motion_predictor(motion_data: Dict, epochs=30):
-    """Train motion intensity predictor"""
-    print("\n=== Training Motion Predictor ===")
-    
-    # Prepare data
-    X_sequences = []
-    y_velocities = []
-    y_zooms = []
-    
-    feature_extractor = AdvancedFeatureExtractor()
-    
-    for gesture_type, sessions in motion_data.items():
-        for session in sessions:
-            if len(session['landmarks_sequence']) < 5:
-                continue
-                
-            # Extract motion features
-            motion_features = feature_extractor.extract_motion_features(
-                session['landmarks_sequence']
-            )
-            
-            # Create sequences
-            seq_len = min(len(motion_features['velocity_x']), 30)
-            for i in range(len(session['landmarks_sequence']) - seq_len):
-                # Input: landmark sequence
-                seq = session['landmarks_sequence'][i:i+seq_len]
-                features = feature_extractor.extract_gesture_features(seq)
-                X_sequences.append(features)
-                
-                # Target: average velocity and zoom for next few frames
-                start_idx = i + seq_len
-                end_idx = min(start_idx + 5, len(motion_features['velocity_x']))
-                
-                # Slices for future motion
-                future_vel_x = motion_features['velocity_x'][start_idx:end_idx]
-                future_vel_y = motion_features['velocity_y'][start_idx:end_idx]
-                future_zoom = motion_features['zoom_rate'][start_idx:end_idx]
-
-                # Check for empty slices to prevent NaN from np.mean([])
-                avg_vel_x = np.mean(future_vel_x) if len(future_vel_x) > 0 else 0.0
-                avg_vel_y = np.mean(future_vel_y) if len(future_vel_y) > 0 else 0.0
-                avg_zoom = np.mean(future_zoom) if len(future_zoom) > 0 else 0.0
-                
-                y_velocities.append([avg_vel_x, avg_vel_y])
-                y_zooms.append(avg_zoom)
-    
-    if not X_sequences:
-        print("No motion data available for training")
-        return None
-    
-    # Convert to arrays
-    X = np.array(X_sequences)
-    y_vel = np.array(y_velocities)
-    y_zoom = np.array(y_zooms)
-    
-    print(f"Motion training samples: {len(X)}")
-    
-    # Scale features
-    scaler = RobustScaler()
-    X_scaled = scaler.fit_transform(X)
-    
-    # Train simple regression model for now
-    from sklearn.ensemble import RandomForestRegressor
-    
-    velocity_model = RandomForestRegressor(n_estimators=50, max_depth=10, random_state=42)
-    velocity_model.fit(X_scaled, y_vel)
-    
-    zoom_model = RandomForestRegressor(n_estimators=50, max_depth=10, random_state=42)
-    zoom_model.fit(X_scaled, y_zoom)
-    
-    return {
-        'velocity_model': velocity_model,
-        'zoom_model': zoom_model,
-        'scaler': scaler
-    }
-
-# ============== Main Training Pipeline ==============
+    return transition_matrix
 
 def main():
-    print("Loading training data...")
+    print("=== Enhanced Transition-Aware Training ===\n")
     
-    # Load gesture sequences
-    if not os.path.exists('gesture_data/gesture_sequences.json'):
-        print("Error: gesture_sequences.json not found. Run gesture_recorder.py first.")
-        sys.exit(1)
+    # Load data
+    data_path = 'gesture_data/transition_aware_training_data.json'
+    if not os.path.exists(data_path):
+        print(f"Error: {data_path} not found.")
+        print("Please run the enhanced recorder first to generate transition-aware data.")
+        return
     
-    with open('gesture_data/gesture_sequences.json', 'r') as f:
-        gesture_data = json.load(f)
+    with open(data_path, 'r') as f:
+        data = json.load(f)
     
-    # Filter empty entries
-    gesture_data = {k: v for k, v in gesture_data.items() if v}
+    print(f"Loaded {len(data['sequences'])} samples")
     
-    if not gesture_data:
-        print("Error: No gesture data found.")
-        sys.exit(1)
+    # Analyze transition patterns
+    transition_matrix = analyze_transition_patterns(data)
     
-    # Prepare gesture classification data
-    feature_extractor = AdvancedFeatureExtractor()
-    X_gestures = []
-    y_gestures = []
+    # Extract features
+    print("\nExtracting enhanced features...")
+    X = []
+    for seq in data['sequences']:
+        features = extract_enhanced_features(seq)
+        X.append(features)
     
-    print("\nExtracting gesture features...")
-    for gesture, sequences in gesture_data.items():
-        for seq in sequences:
-            if len(seq) == GESTURE_SEQUENCE_LENGTH:
-                features = feature_extractor.extract_gesture_features(seq)
-                X_gestures.append(features)
-                y_gestures.append(gesture)
+    X = np.array(X)
+    print(f"Feature shape: {X.shape}")
     
-    X_gestures = np.array(X_gestures)
-    print(f"Total gesture samples: {len(X_gestures)}")
-    print(f"Feature dimension: {X_gestures.shape[1]}")
+    # Process labels
+    refined_labels = create_transition_labels(data['labels'], data['phases'])
     
-    # Encode labels
+    # Encode labels and contexts
     label_encoder = LabelEncoder()
-    y_encoded = label_encoder.fit_transform(y_gestures)
+    y = label_encoder.fit_transform(refined_labels)
+    
+    context_encoder = LabelEncoder()
+    # Add 'none' to possible contexts
+    all_contexts = list(set(data['contexts'] + ['none']))
+    context_encoder.fit(all_contexts)
+    contexts = context_encoder.transform(data['contexts'])
+    
+    print(f"\nClasses: {label_encoder.classes_}")
+    print(f"Contexts: {context_encoder.classes_}")
     
     # Split data
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_gestures, y_encoded, test_size=0.2, random_state=42, stratify=y_encoded
+    X_train, X_val, y_train, y_val, contexts_train, contexts_val = train_test_split(
+        X, y, contexts, test_size=0.2, random_state=42, stratify=y
     )
     
-    # Scale features
+    # Normalize features
     scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
+    X_train_scaled = scaler.fit_transform(X_train.reshape(-1, X_train.shape[-1]))
+    X_train_scaled = X_train_scaled.reshape(X_train.shape)
     
-    # Train multiple classifiers and pick best
-    print("\nTraining classifiers...")
+    X_val_scaled = scaler.transform(X_val.reshape(-1, X_val.shape[-1]))
+    X_val_scaled = X_val_scaled.reshape(X_val.shape)
     
-    # 1. Neural Network
-    nn_model, nn_acc = train_gesture_classifier(
-        X_train_scaled, y_train, X_test_scaled, y_test, epochs=50
+    # Train model
+    print("\nTraining transition-aware model...")
+    model, history, best_acc = train_transition_aware_model(
+        X_train_scaled, y_train, X_val_scaled, y_val,
+        contexts_train, contexts_val,
+        num_epochs=100, batch_size=32
     )
     
-    # 2. Random Forest
-    rf_model, rf_acc = train_random_forest_classifier(
-        X_train_scaled, y_train, X_test_scaled, y_test
-    )
+    print(f"\nBest validation accuracy: {best_acc:.2f}%")
     
-    # Choose best model
-    # if rf_acc >= nn_acc:
-    #     print(f"\nUsing Random Forest (accuracy: {rf_acc:.2f}%)")
-    #     best_classifier = rf_model
-    #     classifier_type = 'random_forest'
-    # else:
-    print(f"\nUsing Neural Network (accuracy: {nn_acc:.2f}%)")
-    best_classifier = nn_model
-    classifier_type = 'neural_network'
-    
-    # # Load and train motion predictor if available
-    # motion_models = None
-    # if os.path.exists('gesture_data/motion_sessions.json'):
-    #     print("\nLoading motion data...")
-    #     with open('gesture_data/motion_sessions.json', 'r') as f:
-    #         motion_data = json.load(f)
-        
-    #     if motion_data:
-    #         motion_models = train_motion_predictor(motion_data)
-    
-    # Save models
-    print("\n=== Saving Models ===")
+    # Save model and preprocessors
+    print("\nSaving models...")
     os.makedirs('gesture_data', exist_ok=True)
     
-    # Save gesture classifier
-    if classifier_type == 'neural_network':
-        torch.save({
-            'model_state': best_classifier.state_dict(),
-            'model_type': 'neural_network',
-            'input_size': X_gestures.shape[1],
-            'num_classes': len(label_encoder.classes_),
-            'classes': label_encoder.classes_.tolist(),
-            'sequence_length': GESTURE_SEQUENCE_LENGTH
-        }, 'gesture_data/gesture_classifier.pth')
-    else:
-        joblib.dump(best_classifier, 'gesture_data/gesture_classifier.pkl')
-        joblib.dump({
-            'model_type': 'random_forest',
-            'classes': label_encoder.classes_.tolist(),
-            'sequence_length': GESTURE_SEQUENCE_LENGTH
-        }, 'gesture_data/classifier_info.pkl')
+    # Save PyTorch model
+    torch.save({
+        'model_state': model.state_dict(),
+        'input_size': X.shape[2],
+        'sequence_length': X.shape[1],
+        'num_classes': len(label_encoder.classes_),
+        'classes': label_encoder.classes_.tolist(),
+        'context_classes': context_encoder.classes_.tolist(),
+        'transition_matrix': transition_matrix,
+        'best_accuracy': best_acc
+    }, 'gesture_data/transition_aware_model.pth')
     
     # Save preprocessors
-    joblib.dump(scaler, 'gesture_data/gesture_scaler.pkl')
-    joblib.dump(label_encoder, 'gesture_data/label_encoder.pkl')
-    joblib.dump(feature_extractor, 'gesture_data/feature_extractor.pkl')
+    joblib.dump(scaler, 'gesture_data/transition_scaler.pkl')
+    joblib.dump(label_encoder, 'gesture_data/transition_label_encoder.pkl')
+    joblib.dump(context_encoder, 'gesture_data/context_encoder.pkl')
     
-    # # Save motion models if trained
-    # if motion_models:
-    #     joblib.dump(motion_models, 'gesture_data/motion_models.pkl')
-    #     print("✓ Motion models saved")
+    # Generate confusion matrix for analysis
+    print("\nAnalyzing model performance on transitions...")
+    model.eval()
+    all_preds = []
+    all_labels = []
     
-    print("\n✓ All models saved successfully!")
-    print(f"Gesture classifier accuracy: {max(nn_acc, rf_acc):.2f}%")
+    with torch.no_grad():
+        for i in range(len(X_val_scaled)):
+            seq = torch.FloatTensor(X_val_scaled[i:i+1]).to(device)
+            ctx = torch.LongTensor([contexts_val[i]]).to(device)
+            
+            outputs = model(seq, ctx)
+            _, predicted = torch.max(outputs['gesture'], 1)
+            
+            all_preds.append(predicted.cpu().item())
+            all_labels.append(y_val[i])
+    
+    # Analyze transition vs non-transition accuracy
+    transition_correct = 0
+    transition_total = 0
+    non_transition_correct = 0
+    non_transition_total = 0
+    
+    for pred, label in zip(all_preds, all_labels):
+        label_name = label_encoder.inverse_transform([label])[0]
+        pred_name = label_encoder.inverse_transform([pred])[0]
+        
+        if '_transition' in label_name:
+            transition_total += 1
+            if pred == label:
+                transition_correct += 1
+        else:
+            non_transition_total += 1
+            if pred == label:
+                non_transition_correct += 1
+    
+    if transition_total > 0:
+        print(f"\nTransition accuracy: {100 * transition_correct / transition_total:.2f}%")
+    if non_transition_total > 0:
+        print(f"Non-transition accuracy: {100 * non_transition_correct / non_transition_total:.2f}%")
+    
+    print("\n✓ Training complete!")
+    print("The model now understands gesture transitions and can differentiate between")
+    print("intentional gestures and return-to-neutral movements.")
 
 if __name__ == "__main__":
     main()
