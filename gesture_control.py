@@ -196,7 +196,9 @@ class RevolutionaryGestureController:
             
         elif self.current_gesture in ['zoom_in', 'zoom_out']:
             # Zooming motion
-            zoom_rate = finger_spread_vel * (1 if self.current_gesture == 'zoom_in' else -1)
+            # The sign of finger_spread_vel already gives us the correct direction.
+            # Positive = open (zoom in), Negative = close (zoom out).
+            zoom_rate = finger_spread_vel 
             intensity = min(abs(finger_spread_vel) * 3.0, 1.0)
             
             return {

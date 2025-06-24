@@ -40,20 +40,20 @@ class TrackpadPhysicsEngine:
         self.position = Vector2D()
         
         # Tunable physics constants
-        self.scroll_friction = 0.92  # Higher = longer glide
+        self.scroll_friction = 0.95  # Higher = longer glide
         self.zoom_friction = 0.88
-        self.scroll_acceleration_factor = 2.5
-        self.zoom_acceleration_factor = 0.015
+        self.scroll_acceleration_factor = 10.0
+        self.zoom_acceleration_factor = 0.12
         
         # Sensitivity curves
         self.scroll_sensitivity_base = 1.0
         self.zoom_sensitivity_base = 1.0
         
         # Limits and constraints
-        self.max_scroll_velocity = 50.0
+        self.max_scroll_velocity = 150.0
         self.max_zoom_velocity = 0.5
         self.scroll_dead_zone = 0.5
-        self.zoom_dead_zone = 0.01
+        self.zoom_dead_zone = 0.005
         
         # State tracking
         self.last_update_time = time.time()
@@ -95,14 +95,12 @@ class TrackpadPhysicsEngine:
         
     def apply_zoom_force(self, zoom_rate: float, intensity: float):
         """Apply zooming force with smooth acceleration"""
-        # Apply sensitivity curve
-        adjusted_rate = self._apply_sensitivity_curve(
-            zoom_rate * self.zoom_acceleration_factor, 
-            self.zoom_sensitivity_base
-        )
+        # BYPASS the faulty sensitivity curve and use direct scaling.
+        # This correctly preserves the sign for both zoom-in and zoom-out.
+        force = zoom_rate * self.zoom_acceleration_factor * intensity
         
         # Apply force to zoom velocity
-        self.zoom_velocity += adjusted_rate * intensity * self.user_zoom_multiplier
+        self.zoom_velocity += force * self.user_zoom_multiplier
         
         # Clamp to maximum velocity
         self.zoom_velocity = np.clip(self.zoom_velocity, -self.max_zoom_velocity, self.max_zoom_velocity)
@@ -110,6 +108,9 @@ class TrackpadPhysicsEngine:
         self.active_forces['zoom'] = time.time()
         self.gesture_intensities['zoom'] = intensity
         
+        # You can keep this print for now to confirm the fix
+        # print(f"Zoom Rate: {zoom_rate:.3f} | Vel: {self.zoom_velocity:.3f} | Accum: {self.zoom_accumulator:.3f}")
+    
     def update(self, dt: Optional[float] = None):
         """Update physics simulation"""
         current_time = time.time()
@@ -141,31 +142,30 @@ class TrackpadPhysicsEngine:
         self.zoom_accumulator += self.zoom_velocity * dt
         
     def execute_smooth_actions(self):
-        """Execute accumulated actions with sub-pixel precision"""
-        # Smooth scrolling
+        """Execute accumulated actions with sub-pixel precision."""
+        # --- Smooth scrolling (this part is fine) ---
         if abs(self.scroll_accumulator.x) >= 1.0 or abs(self.scroll_accumulator.y) >= 1.0:
-            # Extract integer pixels to scroll
             x_pixels = int(self.scroll_accumulator.x)
             y_pixels = int(self.scroll_accumulator.y)
             
-            # Keep fractional part for next frame
             self.scroll_accumulator.x -= x_pixels
             self.scroll_accumulator.y -= y_pixels
             
-            # Execute scroll
             if x_pixels != 0:
                 pyautogui.hscroll(x_pixels)
             if y_pixels != 0:
                 pyautogui.scroll(y_pixels)
         
-        # Smooth zooming
-        if abs(self.zoom_accumulator) >= 0.02:  # Threshold for zoom action
-            if self.zoom_accumulator > 0:
-                pyautogui.hotkey('ctrl', '+')
-                self.zoom_accumulator -= 0.1
-            else:
-                pyautogui.hotkey('ctrl', '-')
-                self.zoom_accumulator += 0.1
+        # --- Corrected smooth zooming logic ---
+        # A simple, stable threshold-based system
+        ZOOM_ACTION_THRESHOLD = 0.1  # How much "zoom energy" is needed for one action
+
+        if self.zoom_accumulator > ZOOM_ACTION_THRESHOLD:
+            pyautogui.hotkey('ctrl', '+')
+            self.zoom_accumulator = 0  # Reset after action to prevent runaway loops
+        elif self.zoom_accumulator < -ZOOM_ACTION_THRESHOLD:
+            pyautogui.hotkey('ctrl', '-')
+            self.zoom_accumulator = 0  # Reset after action
     
     def _apply_sensitivity_curve(self, value: float, base_sensitivity: float) -> float:
         """Apply exponential sensitivity curve for fine control"""
@@ -272,25 +272,36 @@ class GestureMotionExtractor:
         return total_distance / count if count > 0 else 0
     
     def _calculate_spread_velocity(self):
-        """Calculate rate of finger spread change"""
-        if len(self.landmark_history) < 2:
+        """Calculate rate of finger spread change over a smoothed window."""
+        if len(self.landmark_history) < self.window_size:
             return 0.0
-            
-        current_spread = self._calculate_finger_spread()
+
+        # Use a more stable method: compare the average spread of the
+        # first half of the window to the second half.
+        half_window = self.window_size // 2
         
-        # Calculate previous spread
-        prev = self.landmark_history[-2]
-        fingertips = [4, 8, 12, 16, 20]
-        prev_distance = 0
-        count = 0
-        for i in range(len(fingertips)):
-            for j in range(i+1, len(fingertips)):
-                dist = np.linalg.norm(prev[fingertips[i]] - prev[fingertips[j]])
-                prev_distance += dist
-                count += 1
-        prev_spread = prev_distance / count if count > 0 else 0
-        
-        return (current_spread - prev_spread) * 30  # Assuming 30 FPS
+        # Calculate spread for each frame in the history
+        spreads = []
+        for i in range(self.window_size):
+            landmarks = self.landmark_history[i]
+            fingertips = [4, 8, 12, 16, 20]
+            distances = []
+            count = 0
+            for j in range(len(fingertips)):
+                for k in range(j + 1, len(fingertips)):
+                    dist = np.linalg.norm(landmarks[fingertips[j]] - landmarks[fingertips[k]])
+                    distances.append(dist)
+                    count += 1
+            spreads.append(sum(distances) / count if count > 0 else 0)
+
+        # Average the first and second halves of the history
+        first_half_avg = np.mean(spreads[:half_window])
+        second_half_avg = np.mean(spreads[half_window:])
+
+        # The velocity is the difference, scaled by FPS
+        # This is much more stable than frame-to-frame calculation
+        velocity = (second_half_avg - first_half_avg) * (30 / half_window)
+        return velocity
     
     def _calculate_hand_rotation(self):
         """Estimate hand rotation for advanced gestures"""

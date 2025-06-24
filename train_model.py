@@ -385,10 +385,18 @@ def train_motion_predictor(motion_data: Dict, epochs=30):
                 X_sequences.append(features)
                 
                 # Target: average velocity and zoom for next few frames
-                end_idx = min(i + seq_len + 5, len(motion_features['velocity_x']))
-                avg_vel_x = np.mean(motion_features['velocity_x'][i+seq_len:end_idx])
-                avg_vel_y = np.mean(motion_features['velocity_y'][i+seq_len:end_idx])
-                avg_zoom = np.mean(motion_features['zoom_rate'][i+seq_len:end_idx])
+                start_idx = i + seq_len
+                end_idx = min(start_idx + 5, len(motion_features['velocity_x']))
+                
+                # Slices for future motion
+                future_vel_x = motion_features['velocity_x'][start_idx:end_idx]
+                future_vel_y = motion_features['velocity_y'][start_idx:end_idx]
+                future_zoom = motion_features['zoom_rate'][start_idx:end_idx]
+
+                # Check for empty slices to prevent NaN from np.mean([])
+                avg_vel_x = np.mean(future_vel_x) if len(future_vel_x) > 0 else 0.0
+                avg_vel_y = np.mean(future_vel_y) if len(future_vel_y) > 0 else 0.0
+                avg_zoom = np.mean(future_zoom) if len(future_zoom) > 0 else 0.0
                 
                 y_velocities.append([avg_vel_x, avg_vel_y])
                 y_zooms.append(avg_zoom)
@@ -497,15 +505,15 @@ def main():
         best_classifier = nn_model
         classifier_type = 'neural_network'
     
-    # Load and train motion predictor if available
-    motion_models = None
-    if os.path.exists('gesture_data/motion_sessions.json'):
-        print("\nLoading motion data...")
-        with open('gesture_data/motion_sessions.json', 'r') as f:
-            motion_data = json.load(f)
+    # # Load and train motion predictor if available
+    # motion_models = None
+    # if os.path.exists('gesture_data/motion_sessions.json'):
+    #     print("\nLoading motion data...")
+    #     with open('gesture_data/motion_sessions.json', 'r') as f:
+    #         motion_data = json.load(f)
         
-        if motion_data:
-            motion_models = train_motion_predictor(motion_data)
+    #     if motion_data:
+    #         motion_models = train_motion_predictor(motion_data)
     
     # Save models
     print("\n=== Saving Models ===")
@@ -534,10 +542,10 @@ def main():
     joblib.dump(label_encoder, 'gesture_data/label_encoder.pkl')
     joblib.dump(feature_extractor, 'gesture_data/feature_extractor.pkl')
     
-    # Save motion models if trained
-    if motion_models:
-        joblib.dump(motion_models, 'gesture_data/motion_models.pkl')
-        print("✓ Motion models saved")
+    # # Save motion models if trained
+    # if motion_models:
+    #     joblib.dump(motion_models, 'gesture_data/motion_models.pkl')
+    #     print("✓ Motion models saved")
     
     print("\n✓ All models saved successfully!")
     print(f"Gesture classifier accuracy: {max(nn_acc, rf_acc):.2f}%")
