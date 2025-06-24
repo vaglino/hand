@@ -19,9 +19,9 @@ from physics_engine import TrackpadPhysicsEngine, GestureMotionExtractor, Vector
 from train_model import LightweightGestureNet, AdvancedFeatureExtractor
 
 # Performance constants
-GESTURE_CHECK_INTERVAL = 5  # Check gesture state every N frames
+GESTURE_CHECK_INTERVAL = 2  # Check gesture state every N frames
 MOTION_WINDOW_SIZE = 5      # Frames for motion smoothing
-MIN_CONFIDENCE = 0.65       # Minimum confidence for gesture activation
+MIN_CONFIDENCE = 0.7       # Minimum confidence for gesture activation
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 

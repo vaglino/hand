@@ -17,7 +17,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Configuration
-GESTURE_SEQUENCE_LENGTH = 12
+GESTURE_SEQUENCE_LENGTH = 15
 NUM_LANDMARKS = 21
 FEATURE_DIM = NUM_LANDMARKS * 9  # pos(3) + vel(3) + accel(3)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -280,7 +280,7 @@ def train_gesture_classifier(X_train, y_train, X_test, y_test, epochs=50):
     
     # Training setup
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5)
     
     best_acc = 0.0
@@ -496,14 +496,14 @@ def main():
     )
     
     # Choose best model
-    if rf_acc >= nn_acc:
-        print(f"\nUsing Random Forest (accuracy: {rf_acc:.2f}%)")
-        best_classifier = rf_model
-        classifier_type = 'random_forest'
-    else:
-        print(f"\nUsing Neural Network (accuracy: {nn_acc:.2f}%)")
-        best_classifier = nn_model
-        classifier_type = 'neural_network'
+    # if rf_acc >= nn_acc:
+    #     print(f"\nUsing Random Forest (accuracy: {rf_acc:.2f}%)")
+    #     best_classifier = rf_model
+    #     classifier_type = 'random_forest'
+    # else:
+    print(f"\nUsing Neural Network (accuracy: {nn_acc:.2f}%)")
+    best_classifier = nn_model
+    classifier_type = 'neural_network'
     
     # # Load and train motion predictor if available
     # motion_models = None

@@ -4,7 +4,7 @@
     "version": "2.0",
     
     "gesture_recognition": {
-      "sequence_length": 12,
+      "sequence_length": 15,
       "check_interval_frames": 5,
       "min_confidence_threshold": 0.65,
       "classifier_type": "auto",

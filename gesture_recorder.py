@@ -15,7 +15,7 @@ from typing import List, Dict, Optional
 import threading
 
 # Reduced sequence length for faster response
-GESTURE_SEQUENCE_LENGTH = 12
+GESTURE_SEQUENCE_LENGTH = 15
 MOTION_BUFFER_SIZE = 60  # 2 seconds at 30fps
 
 @dataclass
