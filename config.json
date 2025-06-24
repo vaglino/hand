@@ -1,14 +1,12 @@
 {
   "gesture_control_config": {
-    "description": "Revolutionary Gesture Control System Configuration",
-    "version": "2.0",
+    "description": "Simplified Gesture Control System Configuration",
+    "version": "2.1",
     
     "gesture_recognition": {
       "sequence_length": 15,
       "check_interval_frames": 5,
-      "min_confidence_threshold": 0.65,
-      "classifier_type": "auto",
-      "_comment": "auto will choose best available (neural_network or random_forest)"
+      "min_confidence_threshold": 0.70
     },
     
     "physics_engine": {
@@ -16,119 +14,35 @@
         "base_sensitivity": 1.0,
         "acceleration_factor": 2.5,
         "friction_coefficient": 0.92,
-        "max_velocity": 50.0,
-        "dead_zone": 0.5,
-        "_comment": "Higher friction = longer glide, lower = quicker stop"
+        "max_velocity": 50.0
       },
-      
       "zoom": {
         "base_sensitivity": 1.0,
         "acceleration_factor": 0.015,
         "friction_coefficient": 0.88,
-        "max_velocity": 0.5,
-        "dead_zone": 0.01
-      },
-      
-      "sensitivity_curve": {
-        "type": "exponential",
-        "fine_control_threshold": 0.3,
-        "fine_control_multiplier": 0.5,
-        "acceleration_threshold": 0.7,
-        "acceleration_multiplier": 3.0
+        "max_velocity": 0.5
       }
     },
     
     "motion_extraction": {
       "smoothing_window_size": 5,
-      "velocity_scale_factor": 100,
-      "use_kalman_filter": false,
-      "palm_tracking_landmarks": [0, 5, 9, 13, 17],
-      "fingertip_landmarks": [4, 8, 12, 16, 20]
+      "velocity_scale_factor": 100
     },
     
     "gesture_mappings": {
-      "scroll_up": {
-        "action": "scroll_vertical",
-        "direction": [0, 1],
-        "enabled": true
-      },
-      "scroll_down": {
-        "action": "scroll_vertical",
-        "direction": [0, -1],
-        "enabled": true
-      },
-      "scroll_left": {
-        "action": "scroll_horizontal",
-        "direction": [-1, 0],
-        "enabled": true
-      },
-      "scroll_right": {
-        "action": "scroll_horizontal",
-        "direction": [1, 0],
-        "enabled": true
-      },
-      "zoom_in": {
-        "action": "zoom",
-        "direction": 1,
-        "enabled": true
-      },
-      "zoom_out": {
-        "action": "zoom",
-        "direction": -1,
-        "enabled": true
-      }
+      "scroll_up": { "action": "scroll_vertical", "direction": [0, 1] },
+      "scroll_down": { "action": "scroll_vertical", "direction": [0, -1] },
+      "zoom_in": { "action": "zoom", "direction": 1 },
+      "zoom_out": { "action": "zoom", "direction": -1 }
     },
-    
+
     "performance": {
-      "target_fps": 30,
-      "max_cpu_percent": 25,
-      "use_gpu_if_available": true,
-      "frame_skip_threshold": 50,
-      "_comment": "Skip frames if latency exceeds threshold (ms)"
+      "target_fps": 30
     },
-    
+
     "ui_preferences": {
       "show_fps_counter": true,
-      "show_gesture_indicator": true,
-      "show_momentum_visualization": true,
-      "show_confidence_bar": true,
-      "overlay_opacity": 0.3
-    },
-    
-    "calibration": {
-      "auto_load_profile": true,
-      "profile_path": "gesture_data/calibration_profile.json",
-      "adaptive_learning": {
-        "enabled": false,
-        "learning_rate": 0.01,
-        "feedback_window_seconds": 300
-      }
-    },
-    
-    "advanced": {
-      "mediapipe_settings": {
-        "min_hand_detection_confidence": 0.5,
-        "min_hand_presence_confidence": 0.5,
-        "model_complexity": 1
-      },
-      
-      "debug_mode": false,
-      "log_performance_metrics": false,
-      "save_session_data": false,
-      
-      "experimental_features": {
-        "multi_hand_support": false,
-        "gesture_prediction": false,
-        "context_aware_sensitivity": false
-      }
-    },
-    
-    "hotkeys": {
-      "reset_physics": "r",
-      "increase_sensitivity": "+",
-      "decrease_sensitivity": "-",
-      "toggle_debug": "d",
-      "quit": "q"
+      "show_gesture_indicator": true
     }
   }
 }

@@ -1,3 +1,5 @@
+# transition_aware_model.py
+
 # transition_aware_model.py - Advanced model that understands gesture transitions
 
 import torch
@@ -7,6 +9,7 @@ import numpy as np
 from typing import Dict, List, Tuple, Optional
 from collections import deque
 import json
+import time # I noticed this was missing but used in the adapter class
 
 class TransitionAwareLSTM(nn.Module):
     """LSTM model that understands gesture transitions and context"""
@@ -117,8 +120,9 @@ class GestureIntentionDetector:
             return {'is_intentional': True, 'confidence': 0.5, 'reason': 'insufficient_data'}
         
         # Calculate motion characteristics
-        recent_velocities = [m['velocity'] for m in self.motion_history[-5:]]
-        recent_accelerations = [m.get('acceleration', 0) for m in self.motion_history[-5:]]
+        # --- FIX: Convert deque to list before slicing ---
+        recent_velocities = [m['velocity'] for m in list(self.motion_history)[-5:]]
+        recent_accelerations = [m.get('acceleration', 0) for m in list(self.motion_history)[-5:]]
         
         avg_velocity = np.mean(recent_velocities)
         velocity_variance = np.var(recent_velocities)
