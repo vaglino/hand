@@ -36,11 +36,11 @@ gesture_control.bat
 
 | Gesture | Action |
 |---------|--------|
-| Swipe hand UP | Scroll up |
-| Swipe hand DOWN | Scroll down |
-| Spread fingers (open hand) | Zoom in |
-| Close fingers (make fist) | Zoom out |
-| Keep hand still | No action |
+| Two-finger swipe downwards | Scroll up |
+| Two-finger swipe upwards | Scroll down |
+| Pinch open fingers | Zoom in |
+| Pinch close fingers | Zoom out |
+| Keep hand resting closed | No action |
 
 ## Files
 
