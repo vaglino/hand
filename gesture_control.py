@@ -41,7 +41,7 @@ class GestureController:
         self.active_gesture = "neutral"
         self.debounce_counter = 0
         self.debounce_candidate = "neutral"
-        self.debounce_threshold = 2  # Needs to see gesture for 3 frames to confirm
+        self.debounce_threshold = 4  # Needs to see gesture for 3 frames to confirm
         self.neutral_counter = 0
         self.neutral_threshold = 2   # Needs to see neutral for 5 frames to reset state
 
@@ -121,7 +121,7 @@ class GestureController:
             
             # Detect a potential new gesture. We look for non-neutral, non-return gestures.
             # A higher initial confidence helps prevent accidental activation.
-            if 'return' not in predicted_label and 'neutral' not in predicted_label and confidence > 0.7:
+            if 'return' not in predicted_label and 'neutral' not in predicted_label and confidence > 0.8:
                 self.state = GestureState.DEBOUNCING
                 # Clean up the label (e.g., 'scroll_up_start' becomes 'scroll_up')
                 self.debounce_candidate = predicted_label.replace('_start', '')
@@ -154,7 +154,7 @@ class GestureController:
                 self.active_gesture = "neutral"
 
             # Condition 3 (Optional but good): If a completely different gesture is detected, reset.
-            elif predicted_label != self.active_gesture and 'neutral' not in predicted_label and confidence > 0.7:
+            elif predicted_label != self.active_gesture and 'neutral' not in predicted_label and confidence > 0.8:
                 self.state = GestureState.NEUTRAL
                 self.active_gesture = "neutral"
 
@@ -173,9 +173,20 @@ class GestureController:
         motion_features = self.motion_extractor.extract_motion_features(landmarks)
         if 'scroll' in self.active_gesture:
             direction = Vector2D(0, 0)
-            if 'up' in self.active_gesture: direction = Vector2D(0, 1)
-            elif 'down' in self.active_gesture: direction = Vector2D(0, -1)
-            self.physics_engine.apply_scroll_force(direction, motion_features['palm_velocity'].magnitude())
+            
+            # --- FIX: Introduce a sensitivity multiplier ---
+            velocity_magnitude = motion_features['palm_velocity'].magnitude()
+            sensitivity_multiplier = 1.0 # Default sensitivity
+
+            if 'up' in self.active_gesture: 
+                direction = Vector2D(0, 1) # Scrolls content up
+            elif 'down' in self.active_gesture: 
+                direction = Vector2D(0, -1) # Scrolls content down
+                # Compensate for the slower upward hand motion by boosting its effect
+                sensitivity_multiplier = 2.0 # (Value can be tuned, e.g., 1.2 to 1.5)
+
+            # Apply force using the adjusted velocity
+            self.physics_engine.apply_scroll_force(direction, velocity_magnitude * sensitivity_multiplier)
         elif 'zoom' in self.active_gesture:
             zoom_rate = motion_features['spread_velocity']
             # Ensure the motion direction matches the gesture
