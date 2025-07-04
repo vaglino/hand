@@ -1,0 +1,48 @@
+{
+  "gesture_control_config": {
+    "description": "Simplified Gesture Control System Configuration",
+    "version": "2.1",
+    
+    "gesture_recognition": {
+      "sequence_length": 15,
+      "check_interval_frames": 5,
+      "min_confidence_threshold": 0.70
+    },
+    
+    "physics_engine": {
+      "scroll": {
+        "base_sensitivity": 1.0,
+        "acceleration_factor": 2.5,
+        "friction_coefficient": 0.92,
+        "max_velocity": 50.0
+      },
+      "zoom": {
+        "base_sensitivity": 1.0,
+        "acceleration_factor": 0.015,
+        "friction_coefficient": 0.88,
+        "max_velocity": 0.5
+      }
+    },
+    
+    "motion_extraction": {
+      "smoothing_window_size": 5,
+      "velocity_scale_factor": 100
+    },
+    
+    "gesture_mappings": {
+      "scroll_up": { "action": "scroll_vertical", "direction": [0, 1] },
+      "scroll_down": { "action": "scroll_vertical", "direction": [0, -1] },
+      "zoom_in": { "action": "zoom", "direction": 1 },
+      "zoom_out": { "action": "zoom", "direction": -1 }
+    },
+
+    "performance": {
+      "target_fps": 30
+    },
+
+    "ui_preferences": {
+      "show_fps_counter": true,
+      "show_gesture_indicator": true
+    }
+  }
+}
