@@ -9,7 +9,7 @@ A physics-based system to control your computer with natural hand gestures. This
 ### Key Features
 - **Trackpad-like Physics:** Actions like scrolling and zooming have momentum and friction, creating a smooth experience.
 - **State Machine:** Understands user intent by tracking gesture states (`ACTIVE`, `RETURNING`, `NEUTRAL`), eliminating false triggers between movements.
-- **Temporal Convolutional Network (TCN):** A TCN with an Attention mechanism for superior recognizing gesture sequences.
+- **Temporal Convolutional Network (TCN):** A TCN with an Attention mechanism for recognizing gesture sequences.
 - **Feature Engineering:** Higher robustness through Procrustes alignment (rotation/scale invariance), Butterworth filtering (jitter reduction), and multi-temporal feature extraction.
 - **Performance optimizations:** The model is compiled to TorchScript for faster, real-time inference on both CPU and GPU.
 - **Data Collection:** A guided recorder captures complete gesture cycles, including the crucial transition phases, ensuring high-quality training data.
