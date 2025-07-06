@@ -1,4 +1,6 @@
-# Core requirements for Revolutionary Gesture Control
+# Enhanced Requirements for Advanced Gesture Control System
+
+# Core ML and Computer Vision
 mediapipe>=0.10.0
 opencv-python>=4.8.0
 numpy>=1.24.0
@@ -6,13 +8,36 @@ scikit-learn>=1.3.0
 pyautogui>=0.9.54
 joblib>=1.3.0
 
-# Scientific computing
+# Deep Learning Framework (PyTorch)
+torch>=2.0.0
+torchvision>=0.15.0
+torchaudio>=2.0.0
+
+# Scientific Computing and Signal Processing
 scipy>=1.10.0
-
-# Additional requirements for enhanced features
-matplotlib>=3.7.0
 pandas>=2.0.0
-numba>=0.57.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
 
-# GPU Monitoring (for NVIDIA GPUs)
+# Performance Optimization
+numba>=0.57.0
+onnx>=1.14.0
+onnxruntime-gpu>=1.15.0  # GPU-accelerated inference
+# onnxruntime>=1.15.0    # CPU-only alternative (uncomment if no GPU)
+
+# Advanced Data Processing
+Pillow>=9.5.0
+h5py>=3.8.0
+
+# Optional GPU Monitoring
 pynvml>=11.5.0
+
+# Development and Debugging
+tqdm>=4.65.0
+psutil>=5.9.0
+
+# Data Augmentation (if needed for custom augmentations)
+albumentations>=1.3.0
+
+# Additional signal processing for filtering
+filterpy>=1.4.5
