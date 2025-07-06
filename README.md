@@ -1,4 +1,4 @@
-# Hand Gesture Control System
+# Hand Gesture Computer Control
 
 Control your computer with hand gestures using deep learning.
 
