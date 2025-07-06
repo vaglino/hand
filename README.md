@@ -2,7 +2,7 @@
 
 Control your computer with hand gestures using deep learning.
 
-A physics-based system to control your computer with natural hand gestures. This project uses a machine learning pipeline to provide intuitive control, mimicking the feel of a trackpad.
+A physics-based system to control your computer with natural hand gestures. This project uses a ML pipeline to provide intuitive control, mimicking the feel of a trackpad but with video.
 
 ![Gestures](gestures_schematic.png)
 
