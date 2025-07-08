@@ -488,7 +488,7 @@ class EnhancedGestureController:
             base_options=base_opts,
             running_mode=vision.RunningMode.LIVE_STREAM,
             num_hands=1,
-            min_hand_detection_confidence=0.5,
+            min_hand_detection_confidence=0.35,
             min_hand_presence_confidence=0.5,
             result_callback=self._process_result
         )
@@ -501,6 +501,8 @@ class EnhancedGestureController:
             print("📝 Frame data will be saved to 'debug_frames' folder")
         
         print("✅ Enhanced controller initialized successfully")
+
+        self.hand_was_present = False # <--- ADD THIS NEW ATTRIBUTE
     
     def _check_opencv_gui(self):
         """Check if OpenCV GUI functions are available."""
@@ -781,6 +783,16 @@ class EnhancedGestureController:
                 
                 # Hand processing
                 if self.results and self.results.hand_landmarks:
+                     # If hand has just reappeared, reset everything to ensure a clean start
+                    if not self.hand_was_present:
+                        print("👋 Hand has reappeared. Resetting state.")
+                        self.landmark_buffer.clear()
+                        self.prediction_smoother.reset()
+                        self.physics_engine.reset_momentum()
+                        self.motion_extractor.reset() # We'll add this method
+                        self.state = GestureState.NEUTRAL
+                    
+                    self.hand_was_present = True
                     landmarks = self.results.hand_landmarks[0]
                     landmarks_list = [[lm.x, lm.y, lm.z] for lm in landmarks]
                     self.landmark_buffer.append(landmarks_list)
@@ -802,7 +814,10 @@ class EnhancedGestureController:
                         frame, proto, mp.solutions.hands.HAND_CONNECTIONS
                     )
                 else:
-                    # No hand detected - return to neutral
+                    # --- NO HAND IS VISIBLE ---
+                    self.hand_was_present = False
+
+                    # return to neutral
                     if self.state != GestureState.NEUTRAL:
                         self.state = GestureState.NEUTRAL
                         self.active_gesture = "neutral"

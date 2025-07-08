@@ -94,6 +94,10 @@ class GestureMotionExtractor:
         self.window_size = window_size
         self.landmark_history = []
     
+    def reset(self): # <--- ADD THIS METHOD
+        """Clears the history of landmarks."""
+        self.landmark_history.clear()
+    
     def extract_motion_features(self, landmarks):
         landmarks_array = np.array([[lm.x, lm.y, lm.z] for lm in landmarks])
         self.landmark_history.append(landmarks_array)
