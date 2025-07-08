@@ -13,7 +13,7 @@ from collections import deque, Counter
 from dataclasses import dataclass, asdict
 from typing import List, Dict
 from enum import Enum
-import threading  # <--- FIX: Added the missing import here
+import threading
 
 # Recording parameters
 GESTURE_SEQUENCE_LENGTH = 20  # Increased slightly for better context
@@ -73,6 +73,8 @@ class TransitionAwareRecorder:
             'scroll_down': "Move hand downward smoothly, then return to center",
             'zoom_in': "Spread fingers apart, then return to neutral",
             'zoom_out': "Pinch fingers together, then return to neutral",
+            'maximize_window': "Show an open hand, then return to neutral",
+            'go_back': "Swipe hand to the left, then return to center",
             'neutral': "Keep hand still in relaxed position"
         }
         
@@ -173,7 +175,7 @@ class TransitionAwareRecorder:
             self._draw_gesture_guide(frame)
         else:
             cv2.putText(frame, "GESTURE RECORDER", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-            cv2.putText(frame, "[1-5] Record Gestures | [S] Save & Process | [Q] Quit", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(frame, "[1-7] Record Gestures | [S] Save & Append | [Q] Quit", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         return frame
     
     def _draw_gesture_guide(self, frame):
@@ -194,41 +196,58 @@ class TransitionAwareRecorder:
             elif 'zoom_out' in gesture_type:
                 cv2.arrowedLine(frame, (center_x - 80, center_y), (center_x - 30, center_y), (0, 255, 0), 4, tipLength=0.3)
                 cv2.arrowedLine(frame, (center_x + 80, center_y), (center_x + 30, center_y), (0, 255, 0), 4, tipLength=0.3)
+            elif 'go_back' in gesture_type:
+                cv2.arrowedLine(frame, (center_x + 80, center_y), (center_x - 80, center_y), (0, 255, 0), 4, tipLength=0.3)
+            elif 'maximize_window' in gesture_type:
+                cv2.putText(frame, "OPEN HAND", (center_x - 80, center_y), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
         # Guide for returning to neutral
         elif phase == GesturePhase.TRANSITIONING_TO_NEUTRAL:
              cv2.putText(frame, "Return to Center", (center_x - 100, center_y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 150, 0), 2)
 
     def save_data(self):
         if not self.continuous_sequences:
-            print("No data recorded to save.")
+            print("No new data recorded in this session to save.")
             return
 
         os.makedirs('gesture_data', exist_ok=True)
-        # Save the raw continuous data (optional, but good for debugging)
-        sequences_data = [seq.to_dict() for seq in self.continuous_sequences]
         output_path_raw = 'gesture_data/continuous_sequences.json'
-        with open(output_path_raw, 'w') as f:
-            json.dump(sequences_data, f, indent=2)
-        print(f"\n✓ Saved {len(sequences_data)} raw sequences to {output_path_raw}")
         
-        # Process and save the final training data
-        self._generate_training_data()
+        all_sequences_data = []
+        if os.path.exists(output_path_raw):
+            try:
+                with open(output_path_raw, 'r') as f:
+                    existing_data = json.load(f)
+                    if isinstance(existing_data, list):
+                        all_sequences_data.extend(existing_data)
+                        print(f"Loaded {len(existing_data)} existing sequences from {output_path_raw}.")
+            except (json.JSONDecodeError, FileNotFoundError):
+                print(f"Warning: Could not read existing data file {output_path_raw}. It will be overwritten.")
+
+        new_sequences_data = [seq.to_dict() for seq in self.continuous_sequences]
+        all_sequences_data.extend(new_sequences_data)
+        
+        with open(output_path_raw, 'w') as f:
+            json.dump(all_sequences_data, f, indent=2)
+        print(f"\n✓ Saved a total of {len(all_sequences_data)} raw sequences to {output_path_raw}")
+        
+        # Process and save the final training data from the combined sequences
+        self._generate_training_data(all_sequences_data)
     
-    def _generate_training_data(self):
-        print("Generating training samples from recorded sequences...")
+    def _generate_training_data(self, all_sequences_data):
+        print("Generating training samples from all recorded sequences...")
         training_data = {'sequences': [], 'labels': []}
         window_size = GESTURE_SEQUENCE_LENGTH
         stride = 2 # Use a smaller stride to generate more samples
 
-        for seq_obj in self.continuous_sequences:
-            phases = seq_obj.phases
-            gesture_type = seq_obj.gesture_type
+        for seq_obj in all_sequences_data:
+            phases = seq_obj['phases']
+            gesture_type = seq_obj['gesture_type']
             for i in range(0, len(phases) - window_size, stride):
                 window_phases = phases[i:i + window_size]
                 landmarks = [p['landmarks'] for p in window_phases]
                 
                 # Determine the label based on the dominant phase in the window
-                phase_values = [p['phase'].value if isinstance(p['phase'], GesturePhase) else p['phase'] for p in window_phases]
+                phase_values = [p['phase'] for p in window_phases]
                 phase_counts = Counter(phase_values)
                 dominant_phase = phase_counts.most_common(1)[0][0]
 
@@ -292,7 +311,9 @@ class TransitionAwareRecorder:
             gesture_map = {
                 ord('1'): 'scroll_up', ord('2'): 'scroll_down',
                 ord('3'): 'zoom_in', ord('4'): 'zoom_out',
-                ord('5'): 'neutral'
+                ord('5'): 'neutral',
+                ord('6'): 'maximize_window',
+                ord('7'): 'go_back'
             }
             if key in gesture_map and not self.is_recording:
                 self._start_guided_recording(gesture_map[key])

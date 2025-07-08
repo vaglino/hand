@@ -9,6 +9,8 @@ from collections import deque
 from mediapipe.framework.formats import landmark_pb2
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
+from mediapipe.tasks.python import vision, BaseOptions
+# from mediapipe.tasks.python.components.processors import GpuOptions
 import joblib
 import os
 from enum import Enum
@@ -16,6 +18,8 @@ from typing import Optional, List, Tuple
 import warnings
 import torch.nn as nn
 import torch.nn.functional as F
+import pyautogui # <-- ADD THIS IMPORT
+from threading import Thread
 
 # Try to import ONNX runtime for optimized inference
 try:
@@ -26,6 +30,26 @@ except ImportError:
     warnings.warn("ONNX Runtime not available. Install with: pip install onnxruntime-gpu")
 
 from physics_engine import TrackpadPhysicsEngine, GestureMotionExtractor, Vector2D
+
+class WebcamStream:
+    def __init__(self, src=0):
+        self.stream = cv2.VideoCapture(src)
+        (self.grabbed, self.frame) = self.stream.read()
+        self.stopped = False
+
+    def start(self):
+        Thread(target=self.update, args=()).start()
+        return self
+
+    def update(self):
+        while not self.stopped:
+            (self.grabbed, self.frame) = self.stream.read()
+
+    def read(self):
+        return self.frame
+
+    def stop(self):
+        self.stopped = True
 
 # --- TCN MODEL DEFINITION (copied from enhanced_train_model) ---
 class TemporalBlock(nn.Module):
@@ -225,6 +249,8 @@ class LandmarkPreprocessor:
             angles.append(angle)
             
         return np.array(angles)
+    
+    
     
     def extract_advanced_features(self, landmarks_sequence: List) -> Optional[np.ndarray]:
         """Extract advanced features with Procrustes alignment and multi-temporal derivatives."""
@@ -453,6 +479,10 @@ class EnhancedGestureController:
         
         # MediaPipe setup
         self.results = None
+        # gpu_opts = GpuOptions()
+        # base_opts = BaseOptions(
+        #     model_asset_path=model_path,
+        #     delegate=BaseOptions.Delegate.GPU)
         base_opts = python.BaseOptions(model_asset_path=model_path)
         opts = vision.HandLandmarkerOptions(
             base_options=base_opts,
@@ -542,6 +572,23 @@ class EnhancedGestureController:
         self.inference_times.append(inference_time * 1000)  # Convert to ms
         
         return label, confidence, smoothed_probs
+
+    def _handle_one_shot_actions(self, gesture: str) -> bool:
+        """
+        Handles discrete, one-shot actions and returns True if an action was fired.
+        These actions are triggered once when a gesture becomes active.
+        """
+        action_fired = False
+        if gesture == 'maximize_window':
+            pyautogui.hotkey('win', 'up')
+            print("ACTION: Maximized window")
+            action_fired = True
+        elif gesture == 'go_back':
+            pyautogui.hotkey('alt', 'left')
+            print("ACTION: Navigated back")
+            action_fired = True
+
+        return action_fired
     
     def _update_enhanced_state_machine(self, predicted_label: str, confidence: float, smoothed_probs: np.ndarray):
         """Enhanced state machine with better transition logic."""
@@ -570,10 +617,20 @@ class EnhancedGestureController:
             if candidate_match and confidence > 0.7:
                 self.debounce_counter += 1
                 if self.debounce_counter >= self.debounce_threshold:
-                    self.state = GestureState.ACTIVE
+                    # --- MODIFICATION: Handle one-shot vs continuous actions ---
                     self.active_gesture = self.debounce_candidate
-                    self.neutral_counter = 0
-                    self.prediction_smoother.reset()  # Reset for clean active state
+                    action_fired = self._handle_one_shot_actions(self.active_gesture)
+
+                    if action_fired:
+                        # For one-shot actions, we don't stay in ACTIVE.
+                        # Transition immediately to RETURNING to prevent re-triggering.
+                        self.state = GestureState.RETURNING
+                        self.neutral_counter = 0
+                    else:
+                        # For continuous actions (scroll, zoom), transition to ACTIVE.
+                        self.state = GestureState.ACTIVE
+                        self.neutral_counter = 0
+                        self.prediction_smoother.reset()  # Reset for clean active state
             else:
                 self.state = GestureState.NEUTRAL
                 self.debounce_counter = 0
@@ -671,10 +728,14 @@ class EnhancedGestureController:
     
     def run(self):
         """Main control loop with enhanced performance monitoring."""
-        cap = cv2.VideoCapture(0)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        cap.set(cv2.CAP_PROP_FPS, 30)
+        # cap = cv2.VideoCapture(0)
+        # cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        # cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        # cap.set(cv2.CAP_PROP_FPS, 30)
+        cap = WebcamStream(src=0).start()
+        cap.stream.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.stream.set(cv2.CAP_PROP_FPS, 30)
         
         print("\n" + "="*60)
         print("🎯 ENHANCED GESTURE CONTROL ACTIVE")
@@ -699,8 +760,11 @@ class EnhancedGestureController:
         
         try:
             while True:
-                ret, frame = cap.read()
-                if not ret:
+                # ret, frame = cap.read()
+                # if not ret:
+                #     break
+                frame = cap.read() # <--- NEW
+                if frame is None:
                     break
                     
                 frame = cv2.flip(frame, 1)
@@ -725,7 +789,7 @@ class EnhancedGestureController:
                     predicted_label, confidence, smoothed_probs = self._predict_gesture()
                     self._update_enhanced_state_machine(predicted_label, confidence, smoothed_probs)
                     
-                    # Apply original working physics
+                    # Apply physics for continuous gestures
                     self._apply_enhanced_physics(landmarks)
                     
                     # Draw hand landmarks
@@ -783,7 +847,8 @@ class EnhancedGestureController:
         
         finally:
             # Cleanup
-            cap.release()
+            # cap.release()
+            cap.stop() # <--- NEW
             if self.gui_available:
                 try:
                     cv2.destroyAllWindows()
