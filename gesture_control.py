@@ -754,7 +754,6 @@ class EnhancedGestureController:
         print("="*60 + "\n")
         
         last_frame_time = time.time()
-        timestamp = 0
         predicted_label, confidence = "neutral", 0.0
         frame_save_counter = 0
         
@@ -774,8 +773,8 @@ class EnhancedGestureController:
                 # MediaPipe processing
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-                timestamp += 1
-                self.landmarker.detect_async(mp_img, timestamp)
+                timestamp_ms = int(time.time() * 1000)
+                self.landmarker.detect_async(mp_img, timestamp_ms)
                 
                 # Calculate dt for physics
                 dt = time.time() - last_frame_time
