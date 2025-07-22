@@ -20,11 +20,17 @@ from scipy.signal import butter, filtfilt
 import math
 from typing import List, Tuple, Optional
 import time
+import platform
 
 warnings.filterwarnings('ignore')
 
-# Move device detection inside main() to avoid repeated prints
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+if torch.cuda.is_available():
+    device = torch.device('cuda')
+elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+    # Check for MPS (Apple Silicon GPU)
+    device = torch.device('mps')
+else:
+    device = torch.device('cpu')
 
 # --- ADVANCED PREPROCESSING MODULE ---
 class LandmarkPreprocessor:
@@ -366,7 +372,7 @@ class EnhancedGestureDataset(Dataset):
                     augmented_sequences.append(aug_seq)
                     augmented_labels.append(label)
         
-        return torch.FloatTensor(augmented_sequences), torch.LongTensor(augmented_labels)
+        return torch.FloatTensor(np.array(augmented_sequences)), torch.LongTensor(augmented_labels)
     
     def __len__(self):
         return len(self.sequences)
@@ -375,7 +381,7 @@ class EnhancedGestureDataset(Dataset):
         return self.sequences[idx], self.labels[idx]
 
 # --- TRAINING WITH ENHANCED FEATURES ---
-def train_enhanced_model(model, train_loader, val_loader, class_weights, num_epochs=40):
+def train_enhanced_model(model, train_loader, val_loader, class_weights, num_epochs=60):
     """Train the enhanced model with advanced techniques."""
     weights_tensor = torch.FloatTensor(class_weights).to(device)
     criterion = nn.CrossEntropyLoss(weight=weights_tensor, label_smoothing=0.1)
@@ -463,23 +469,18 @@ def main():
     print("Applying advanced preprocessing...")
     start_time = time.time()
     sequences = []
+    labels = []
     for i, seq in enumerate(data['sequences']):
-        if i % 100 == 0:
-            print(f"Processing sequence {i+1}/{len(data['sequences'])}")
+        if (i + 1) % 200 == 0:
+            print(f"  ... processing sequence {i+1}/{len(data['sequences'])}")
         features = preprocessor.extract_advanced_features(seq)
         if features is not None:
             sequences.append(features)
-        else:
-            sequences.append(None)
+            labels.append(data['labels'][i])
     
     print(f"Preprocessing completed in {time.time() - start_time:.2f} seconds")
     
-    labels = data['labels']
-    
-    # Filter out malformed data
-    valid_indices = [i for i, seq in enumerate(sequences) if seq is not None]
-    X = np.array([sequences[i] for i in valid_indices])
-    labels = [labels[i] for i in valid_indices]
+    X = np.array(sequences)
     
     if len(X) == 0:
         print("Error: No valid sequences found. Please re-record.")
@@ -523,8 +524,11 @@ def main():
     train_dataset = EnhancedGestureDataset(X_train_scaled, y_train, augment=True, augment_factor=3)
     val_dataset = EnhancedGestureDataset(X_val_scaled, y_val, augment=False)
     
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=2)
-    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=2)
+    # Set num_workers=0 on macOS to avoid multiprocessing issues with some PyTorch versions
+    num_workers = 0 if platform.system() == 'Darwin' else 2
+    print(f"Using {num_workers} workers for DataLoader.")
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=num_workers)
+    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=num_workers)
     
     print(f"Training set expanded to {len(train_dataset)} samples with augmentation")
     

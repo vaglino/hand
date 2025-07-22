@@ -6,6 +6,7 @@ import pyautogui
 from dataclasses import dataclass
 from typing import Tuple, Optional
 import math
+import platform
 
 pyautogui.FAILSAFE = False
 pyautogui.PAUSE = 0
@@ -26,11 +27,11 @@ class TrackpadPhysicsEngine:
     def __init__(self):
         self.scroll_momentum = Vector2D()
         self.zoom_velocity = 0.0
-        self.scroll_friction = 0.95
+        self.scroll_friction = 0.98
         self.zoom_friction = 0.88
-        self.scroll_acceleration_factor = 10.0
+        self.scroll_acceleration_factor = 1.0
         self.zoom_acceleration_factor = 0.5
-        self.max_scroll_velocity = 150.0
+        self.max_scroll_velocity = 50.0
         self.max_zoom_velocity = 1
         self.scroll_dead_zone = 0.5
         self.zoom_dead_zone = 0.002
@@ -39,6 +40,8 @@ class TrackpadPhysicsEngine:
         self.zoom_accumulator = 0.0
         self.user_scroll_multiplier = 1.0
         self.user_zoom_multiplier = 1.0
+        # Use 'command' on macOS and 'ctrl' on other systems for zoom
+        self.zoom_key = 'command' if platform.system() == 'Darwin' else 'ctrl'
         
     def apply_scroll_force(self, direction: Vector2D, intensity: float):
         effective_direction = direction.normalize()
@@ -76,10 +79,10 @@ class TrackpadPhysicsEngine:
         
         ZOOM_ACTION_THRESHOLD = 0.1
         if self.zoom_accumulator > ZOOM_ACTION_THRESHOLD:
-            pyautogui.hotkey('ctrl', '+')
+            pyautogui.hotkey(self.zoom_key, '+')
             self.zoom_accumulator = 0
         elif self.zoom_accumulator < -ZOOM_ACTION_THRESHOLD:
-            pyautogui.hotkey('ctrl', '-')
+            pyautogui.hotkey(self.zoom_key, '-')
             self.zoom_accumulator = 0
     
     def reset_momentum(self):

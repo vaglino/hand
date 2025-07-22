@@ -273,7 +273,12 @@ class TransitionAwareRecorder:
         print(f"Label distribution: {Counter(training_data['labels'])}")
 
     def run(self):
-        cap = cv2.VideoCapture(0)
+        with open('config.json', 'r') as f:
+            config = json.load(f).get('gesture_control_config', {})
+        camera_index = config.get('performance', {}).get('camera_index', 0)
+        print(f"📹 Using camera index: {camera_index}")
+
+        cap = cv2.VideoCapture(camera_index)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         timestamp = 0

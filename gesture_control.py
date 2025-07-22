@@ -19,7 +19,9 @@ import warnings
 import torch.nn as nn
 import torch.nn.functional as F
 import pyautogui # <-- ADD THIS IMPORT
+import platform
 from threading import Thread
+import json
 
 # Try to import ONNX runtime for optimized inference
 try:
@@ -310,7 +312,7 @@ class LandmarkPreprocessor:
 class PredictionSmoother:
     """Smooths predictions using exponential moving average to reduce flickering."""
     
-    def __init__(self, num_classes: int, alpha: float = 0.3, confidence_threshold: float = 0.7):
+    def __init__(self, num_classes: int, alpha: float = 0.3, confidence_threshold: float = 0.8):
         self.num_classes = num_classes
         self.alpha = alpha  # EMA smoothing factor
         self.confidence_threshold = confidence_threshold
@@ -358,7 +360,13 @@ class OptimizedInferenceEngine:
     
     def __init__(self, model_dir: str = 'gesture_data'):
         self.model_dir = model_dir
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if torch.cuda.is_available():
+            self.device = torch.device('cuda')
+        elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+            # Check for MPS (Apple Silicon GPU)
+            self.device = torch.device('mps')
+        else:
+            self.device = torch.device('cpu')
         self.model = None
         self.backend = None
         self.input_size = None
@@ -449,7 +457,12 @@ class EnhancedGestureController:
     def __init__(self, model_path='hand_landmarker.task'):
         print("🚀 Initializing Enhanced Gesture Controller...")
         
-        # Load models and preprocessor
+        # Load models and preprocessors
+        with open('config.json', 'r') as f:
+            config = json.load(f)['gesture_control_config']
+        self.camera_index = config.get('performance', {}).get('camera_index', 0)
+        print(f"📹 Using camera index: {self.camera_index}")
+
         self._load_models()
         
         # Initialize components
@@ -460,17 +473,17 @@ class EnhancedGestureController:
         # Prediction smoothing
         self.prediction_smoother = PredictionSmoother(
             num_classes=len(self.label_encoder.classes_),
-            alpha=0.25,  # Moderate smoothing
-            confidence_threshold=0.75
+            alpha=0.3,  # Moderate smoothing
+            confidence_threshold=0.8
         )
         
         # State machine
         self.state = GestureState.NEUTRAL
         self.active_gesture = "neutral"
         self.debounce_counter = 0
-        self.debounce_threshold = 3
+        self.debounce_threshold = 5
         self.neutral_counter = 0
-        self.neutral_threshold = 4
+        self.neutral_threshold = 3
         
         # Performance monitoring
         self.inference_times = deque(maxlen=100)
@@ -488,7 +501,7 @@ class EnhancedGestureController:
             base_options=base_opts,
             running_mode=vision.RunningMode.LIVE_STREAM,
             num_hands=1,
-            min_hand_detection_confidence=0.35,
+            min_hand_detection_confidence=0.5,
             min_hand_presence_confidence=0.5,
             result_callback=self._process_result
         )
@@ -581,13 +594,24 @@ class EnhancedGestureController:
         These actions are triggered once when a gesture becomes active.
         """
         action_fired = False
+        os_type = platform.system()
+
         if gesture == 'maximize_window':
-            pyautogui.hotkey('win', 'up')
-            print("ACTION: Maximized window")
+            if os_type == 'Darwin':  # macOS
+                # Toggles fullscreen for the active application
+                pyautogui.hotkey('command', 'ctrl', 'f')
+                print("ACTION: Toggled Fullscreen (macOS)")
+            else:  # Windows
+                pyautogui.hotkey('win', 'up')
+                print("ACTION: Maximized window (Windows)")
             action_fired = True
         elif gesture == 'go_back':
-            pyautogui.hotkey('alt', 'left')
-            print("ACTION: Navigated back")
+            if os_type == 'Darwin':  # macOS
+                pyautogui.hotkey('command', 'left')
+                print("ACTION: Navigated back (macOS)")
+            else:  # Windows
+                pyautogui.hotkey('alt', 'left')
+                print("ACTION: Navigated back (Windows)")
             action_fired = True
 
         return action_fired
@@ -616,7 +640,7 @@ class EnhancedGestureController:
         elif self.state == GestureState.DEBOUNCING:
             candidate_match = predicted_label.replace('_start', '') == self.debounce_candidate
             
-            if candidate_match and confidence > 0.7:
+            if candidate_match and confidence > 0.8:
                 self.debounce_counter += 1
                 if self.debounce_counter >= self.debounce_threshold:
                     # --- MODIFICATION: Handle one-shot vs continuous actions ---
@@ -734,7 +758,7 @@ class EnhancedGestureController:
         # cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         # cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         # cap.set(cv2.CAP_PROP_FPS, 30)
-        cap = WebcamStream(src=0).start()
+        cap = WebcamStream(src=self.camera_index).start()
         cap.stream.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         cap.stream.set(cv2.CAP_PROP_FPS, 30)
@@ -888,4 +912,3 @@ class EnhancedGestureController:
 if __name__ == '__main__':
     controller = EnhancedGestureController()
     controller.run()
-

@@ -16,61 +16,101 @@ A physics-based system to control your computer with natural hand gestures. This
 - 
 ## Quick Start
 
-### 1. Setup (one time)
-```bash
-setup.bat
-```
-This will:
-- Create a virtual environment
-- Install all dependencies
-- Download the hand tracking model
+### For Windows
 
-### 2. Record Training Data
-```bash
-gesture_record.bat
-```
-- Press 1-5 to record different gestures
-- Collect 10-20 samples per gesture
-- Press S to save
+1.  **Setup (one time)**
+    ```bash
+    setup.bat
+    ```
+    This will create a virtual environment, install dependencies, and download the necessary models.
 
-### 3. Train Model
-```bash
-gesture_train.bat
-```
-Trains an Temporal Convolutional neural network on your gesture data.
+2.  **Record Training Data**
+    ```bash
+    gesture_record.bat
+    ```
+    - Follow the on-screen prompts to record gestures.
+    - Collect at least 5-10 samples per gesture for good results.
+    - Press `S` to save your recordings.
 
-### 4. Use Gesture Control
-```bash
-gesture_control.bat
-```
+3.  **Train Model**
+    ```bash
+    gesture_train.bat
+    ```
+    Trains the Temporal Convolutional Network on your gesture data. This may take several minutes.
+
+4.  **Use Gesture Control**
+    ```bash
+    gesture_control.bat
+    ```
+
+### For macOS (Apple Silicon)
+
+1.  **Setup (one time)**
+    First, make the shell scripts executable:
+    ```bash
+    chmod +x setup.sh gesture_record.sh gesture_train.sh gesture_control.sh
+    ```
+    Then run the setup script:
+    ```bash
+    ./setup.sh
+    ```
+    This will create a virtual environment, install dependencies (including PyTorch with MPS for GPU acceleration), and download models.
+
+2.  **Record Training Data**
+    ```bash
+    ./gesture_record.sh
+    ```
+    - Your external USB camera will be used by default (as configured in `config.json`).
+    - Follow on-screen prompts to record gestures.
+    - Press `S` to save.
+
+3.  **Train Model**
+    ```bash
+    ./gesture_train.sh
+    ```
+    Trains the model using your Mac's GPU (MPS).
+
+4.  **Use Gesture Control**
+    ```bash
+    ./gesture_control.sh
+    ```
+    **Note:** You may need to grant accessibility permissions to your terminal or IDE (e.g., VS Code) for the gesture controls (like scrolling and zooming) to work. Go to `System Settings > Privacy & Security > Accessibility` and add your terminal application.
 
 ## Gestures
 
-| Gesture | Action |
-|---------|--------|
-| Two-finger swipe downwards | Scroll up |
-| Two-finger swipe upwards | Scroll down |
-| Pinch open fingers | Zoom in |
-| Pinch close fingers | Zoom out |
-| Keep hand resting closed | No action |
+The system supports both continuous and one-shot gestures.
+
+| Gesture                 | Action (Windows) | Action (macOS)         | Type        |
+|-------------------------|------------------|------------------------|-------------|
+| Two-finger swipe down   | Scroll Up        | Scroll Up (Natural)    | Continuous  |
+| Two-finger swipe up     | Scroll Down      | Scroll Down (Natural)  | Continuous  |
+| Spread fingers apart    | Zoom In (`Ctrl`+`+`) | Zoom In (`Cmd`+`+`)      | Continuous  |
+| Pinch fingers together  | Zoom Out (`Ctrl`+`-`) | Zoom Out (`Cmd`+`-`)     | Continuous  |
+| Open hand               | Maximize Window  | Toggle Fullscreen      | One-shot    |
+| Swipe hand left         | Go Back (Browser)| Go Back (Browser)      | One-shot    |
+| Keep hand still/closed  | No action        | No action              | Neutral     |
 
 ## Files
 
 - `gesture_recorder.py` - Records gesture sequences
-- `train_model.py` - Trains LSTM model
+- `train_model.py` - Trains the TCN model
 - `gesture_control.py` - Real-time gesture control
+- `physics_engine.py` - Simulates momentum for smooth control
 - `requirements.txt` - Python dependencies
-- `setup.bat` - One-time setup
-- `gesture_record.bat` - Record gestures
-- `gesture_train.bat` - Train model
-- `gesture_control.bat` - Run control
+- `config.json` - Configuration for camera, physics, etc.
+
+**Scripts:**
+- `setup.bat` / `setup.sh` - One-time setup
+- `gesture_record.bat` / `gesture_record.sh` - Record gestures
+- `gesture_train.bat` / `gesture_train.sh` - Train model
+- `gesture_control.bat` / `gesture_control.sh` - Run control
 
 ## Requirements
 
-- Windows 10/11
+- Windows 10/11 or macOS (with Apple Silicon M1/M2/M3/M4)
 - Python 3.8+
-- Webcam
-- NVIDIA GPU (optional, for faster training)
+- Webcam (Internal or External USB)
+- NVIDIA GPU (optional, for faster training on Windows)
 
 ## Tips
 
