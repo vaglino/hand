@@ -381,7 +381,7 @@ class EnhancedGestureDataset(Dataset):
         return self.sequences[idx], self.labels[idx]
 
 # --- TRAINING WITH ENHANCED FEATURES ---
-def train_enhanced_model(model, train_loader, val_loader, class_weights, num_epochs=60):
+def train_enhanced_model(model, train_loader, val_loader, class_weights, num_epochs=70):
     """Train the enhanced model with advanced techniques."""
     weights_tensor = torch.FloatTensor(class_weights).to(device)
     criterion = nn.CrossEntropyLoss(weight=weights_tensor, label_smoothing=0.1)

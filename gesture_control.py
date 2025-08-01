@@ -483,7 +483,7 @@ class EnhancedGestureController:
         self.debounce_counter = 0
         self.debounce_threshold = 5
         self.neutral_counter = 0
-        self.neutral_threshold = 3
+        self.neutral_threshold = 2
         
         # Performance monitoring
         self.inference_times = deque(maxlen=100)
@@ -781,6 +781,9 @@ class EnhancedGestureController:
         timestamp = 0
         predicted_label, confidence = "neutral", 0.0
         frame_save_counter = 0
+
+        prediction_frame_counter = 0
+
         
         self.fps_start_time = time.time()
         
@@ -815,15 +818,26 @@ class EnhancedGestureController:
                         self.physics_engine.reset_momentum()
                         self.motion_extractor.reset() # We'll add this method
                         self.state = GestureState.NEUTRAL
+                        prediction_frame_counter = 0
                     
                     self.hand_was_present = True
                     landmarks = self.results.hand_landmarks[0]
                     landmarks_list = [[lm.x, lm.y, lm.z] for lm in landmarks]
                     self.landmark_buffer.append(landmarks_list)
                     
-                    # Enhanced prediction and state management
-                    predicted_label, confidence, smoothed_probs = self._predict_gesture()
-                    self._update_enhanced_state_machine(predicted_label, confidence, smoothed_probs)
+                    # --- MODIFICATION: Only predict every 2 frames ---
+                    prediction_frame_counter += 1
+                    if prediction_frame_counter >= 2:
+                        prediction_frame_counter = 0 # Reset counter
+
+                        # Enhanced prediction and state management
+                        predicted_label, confidence, smoothed_probs = self._predict_gesture()
+                        self._update_enhanced_state_machine(predicted_label, confidence, smoothed_probs)
+
+                    # --- END MODIFICATION ---
+                    # # Enhanced prediction and state management
+                    # predicted_label, confidence, smoothed_probs = self._predict_gesture()
+                    # self._update_enhanced_state_machine(predicted_label, confidence, smoothed_probs)
                     
                     # Apply physics for continuous gestures
                     self._apply_enhanced_physics(landmarks)

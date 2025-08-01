@@ -28,9 +28,11 @@ class TrackpadPhysicsEngine:
         self.scroll_momentum = Vector2D()
         self.zoom_velocity = 0.0
         self.scroll_friction = 0.98
+        self.scroll_friction_coefficient = 0.03
         self.zoom_friction = 0.88
-        self.scroll_acceleration_factor = 1.0
-        self.zoom_acceleration_factor = 0.5
+        self.zoom_friction_coefficient = 0.05
+        self.scroll_acceleration_factor = 3.0
+        self.zoom_acceleration_factor = 5.0
         self.max_scroll_velocity = 50.0
         self.max_zoom_velocity = 1
         self.scroll_dead_zone = 0.5
@@ -56,15 +58,24 @@ class TrackpadPhysicsEngine:
         self.zoom_velocity += force * self.user_zoom_multiplier
         self.zoom_velocity = np.clip(self.zoom_velocity, -self.max_zoom_velocity, self.max_zoom_velocity)
         
+        
     def update(self, dt: Optional[float] = None):
         current_time = time.time()
         if dt is None: dt = current_time - self.last_update_time
+        dt = min(dt, 0.1) # Prevent huge jumps in dt if the app hangs for a moment
         self.last_update_time = current_time
         
-        self.scroll_momentum = self.scroll_momentum * self.scroll_friction
+        # self.scroll_momentum = self.scroll_momentum * self.scroll_friction
+        scroll_friction_scalar = self.scroll_friction_coefficient ** dt
+        self.scroll_momentum = self.scroll_momentum * scroll_friction_scalar
+
         if self.scroll_momentum.magnitude() < self.scroll_dead_zone: self.scroll_momentum = Vector2D()
         
-        self.zoom_velocity *= self.zoom_friction
+        zoom_friction_scalar = self.zoom_friction_coefficient ** dt
+        self.zoom_velocity *= zoom_friction_scalar
+        # self.zoom_velocity *= self.zoom_friction
+        # if abs(self.zoom_velocity) < self.zoom_dead_zone: self.zoom_velocity = 0.0
+        # self.zoom_velocity *= (self.zoom_friction ** dt)
         if abs(self.zoom_velocity) < self.zoom_dead_zone: self.zoom_velocity = 0.0
         
         self.scroll_accumulator = self.scroll_accumulator + self.scroll_momentum * dt
