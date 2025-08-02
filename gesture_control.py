@@ -22,6 +22,7 @@ import pyautogui # <-- ADD THIS IMPORT
 import platform
 from threading import Thread
 import json
+from datetime import datetime
 
 # Try to import ONNX runtime for optimized inference
 try:
@@ -459,7 +460,8 @@ class EnhancedGestureController:
         
         # Load models and preprocessors
         with open('config.json', 'r') as f:
-            config = json.load(f)['gesture_control_config']
+            full_config = json.load(f)
+            config = full_config['gesture_control_config']
         self.camera_index = config.get('performance', {}).get('camera_index', 0)
         print(f"📹 Using camera index: {self.camera_index}")
 
@@ -516,6 +518,18 @@ class EnhancedGestureController:
         print("✅ Enhanced controller initialized successfully")
 
         self.hand_was_present = False # <--- ADD THIS NEW ATTRIBUTE
+        self.pointer_config = full_config.get('pointer_config', {})
+        self.previous_index_pos = None
+        self.flick_times = []
+        self.anchor_mouse_pos = None
+        self.screen_width, self.screen_height = pyautogui.size()
+        self.cursor_smoother = Vector2D(0, 0)
+        self.cursor_smoothing_factor = 0.2
+        self.cursor_initialized = False
+        self.thumb_openness_history = deque(maxlen=10)  # Buffer for thumb openness
+        self.openness_threshold = 0.01  # Tune: distance change for "extended"
+        self.flick_cycle_state = 'closed'  # Track thumb state: 'closed', 'extending', 'extended', 'retracting'
+        self.last_flick_time = 0
     
     def _check_opencv_gui(self):
         """Check if OpenCV GUI functions are available."""
@@ -657,6 +671,14 @@ class EnhancedGestureController:
                         self.state = GestureState.ACTIVE
                         self.neutral_counter = 0
                         self.prediction_smoother.reset()  # Reset for clean active state
+                        if self.active_gesture == "pointer":
+                            self.previous_index_pos = None
+                            self.flick_times = []
+                            self.anchor_mouse_pos = pyautogui.position()
+                            self.neutral_threshold = 5
+                            self.cursor_initialized = False
+                            self.thumb_openness_history.clear()
+                            self.flick_cycle_state = 'closed'
             else:
                 self.state = GestureState.NEUTRAL
                 self.debounce_counter = 0
@@ -676,7 +698,7 @@ class EnhancedGestureController:
             elif (predicted_label != self.active_gesture and 
                   'neutral' not in predicted_label and 
                   'return' not in predicted_label and 
-                  confidence > 0.85):
+                  confidence > (0.9 if self.active_gesture == "pointer" else 0.85)):
                 self.state = GestureState.NEUTRAL
                 self.active_gesture = "neutral"
         
@@ -684,8 +706,14 @@ class EnhancedGestureController:
             if self.neutral_counter >= self.neutral_threshold:
                 self.state = GestureState.NEUTRAL
                 self.active_gesture = "neutral"
+        
+        if self.state == GestureState.NEUTRAL:
+            self.neutral_threshold = 2
+            self.cursor_initialized = False
+            self.thumb_openness_history.clear()
+            self.flick_cycle_state = 'closed'
     
-    def _apply_enhanced_physics(self, landmarks):
+    def _apply_active_action(self, landmarks):
         """Apply original working physics - responsive and reliable."""
         if self.state != GestureState.ACTIVE:
             return
@@ -712,6 +740,60 @@ class EnhancedGestureController:
             # Ensure the motion direction matches the gesture
             if ('in' in self.active_gesture and zoom_rate > 0) or ('out' in self.active_gesture and zoom_rate < 0):
                 self.physics_engine.apply_zoom_force(zoom_rate, 1.0)
+        elif self.active_gesture == "pointer":
+            self._handle_pointer_mode(landmarks)
+    
+    def _handle_pointer_mode(self, landmarks):
+        index_tip = landmarks[self.pointer_config['index_tip_landmark']]
+        target_x = index_tip.x * self.screen_width
+        target_y = index_tip.y * self.screen_height
+        
+        if not self.cursor_initialized:
+            pyautogui.moveTo(target_x, target_y)
+            self.cursor_smoother = Vector2D(target_x, target_y)
+            self.cursor_initialized = True
+            return
+
+        self.cursor_smoother.x = self.cursor_smoothing_factor * target_x + (1 - self.cursor_smoothing_factor) * self.cursor_smoother.x
+        self.cursor_smoother.y = self.cursor_smoothing_factor * target_y + (1 - self.cursor_smoothing_factor) * self.cursor_smoother.y
+        
+        pyautogui.moveTo(self.cursor_smoother.x, self.cursor_smoother.y)
+
+        self._detect_clicks(landmarks)
+    
+    def _detect_clicks(self, landmarks):
+        # Calculate thumb openness (distance between thumb tip and index MCP)
+        thumb_tip = np.array([landmarks[self.pointer_config['thumb_tip_landmark']].x, landmarks[self.pointer_config['thumb_tip_landmark']].y])
+        index_mcp = np.array([landmarks[10].x, landmarks[10].y])  # Index MCP is landmark 5
+        openness = np.linalg.norm(thumb_tip - index_mcp)
+        
+        self.thumb_openness_history.append(openness)
+        
+        # Detect state changes for flick cycle
+        if len(self.thumb_openness_history) < 3:
+            return
+        
+        recent_openness = list(self.thumb_openness_history)[-3:]  # Last 3 frames for trend
+        
+        if self.flick_cycle_state == 'closed':
+            if recent_openness[-1] - recent_openness[0] > self.openness_threshold:
+                self.flick_cycle_state = 'extending'
+        elif self.flick_cycle_state == 'extending':
+            if recent_openness[-1] > recent_openness[-2]:
+                # Still extending
+                pass
+            elif recent_openness[-1] - recent_openness[-2] < -self.openness_threshold / 2:
+                self.flick_cycle_state = 'retracting'
+        elif self.flick_cycle_state == 'retracting':
+            if recent_openness[-1] < recent_openness[0] + (self.openness_threshold / 2):
+                # Completed retraction: register click
+                now = time.time()
+                if now - self.last_flick_time < self.pointer_config['double_flick_window']:
+                    pyautogui.doubleClick()
+                else:
+                    pyautogui.click()
+                self.last_flick_time = now
+                self.flick_cycle_state = 'closed'
     
     def _draw_enhanced_ui(self, frame):
         """Draw enhanced UI with performance metrics."""
@@ -737,6 +819,10 @@ class EnhancedGestureController:
         active_text = self.active_gesture.upper() if self.state == GestureState.ACTIVE else 'NONE'
         cv2.putText(frame, f"ACTION: {active_text}", (10, 55), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        
+        if self.active_gesture == "pointer":
+            cv2.putText(frame, "POINTER: Move index tip, flick thumb to click", (10, 75), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
         
         # Performance metrics
         if self.inference_times:
@@ -819,6 +905,12 @@ class EnhancedGestureController:
                         self.motion_extractor.reset() # We'll add this method
                         self.state = GestureState.NEUTRAL
                         prediction_frame_counter = 0
+                        self.previous_index_pos = None
+                        self.flick_times = []
+                        self.anchor_mouse_pos = None
+                        self.cursor_initialized = False
+                        self.thumb_openness_history.clear()
+                        self.flick_cycle_state = 'closed'
                     
                     self.hand_was_present = True
                     landmarks = self.results.hand_landmarks[0]
@@ -840,7 +932,7 @@ class EnhancedGestureController:
                     # self._update_enhanced_state_machine(predicted_label, confidence, smoothed_probs)
                     
                     # Apply physics for continuous gestures
-                    self._apply_enhanced_physics(landmarks)
+                    self._apply_active_action(landmarks)
                     
                     # Draw hand landmarks
                     proto = landmark_pb2.NormalizedLandmarkList()
@@ -860,6 +952,12 @@ class EnhancedGestureController:
                         self.state = GestureState.NEUTRAL
                         self.active_gesture = "neutral"
                         self.prediction_smoother.reset()
+                    self.previous_index_pos = None
+                    self.flick_times = []
+                    self.anchor_mouse_pos = None
+                    self.cursor_initialized = False
+                    self.thumb_openness_history.clear()
+                    self.flick_cycle_state = 'closed'
                 
                 # Physics update with calculated dt
                 self.physics_engine.update(dt)

@@ -33,7 +33,8 @@
       "scroll_up": { "action": "scroll_vertical", "direction": [0, 1] },
       "scroll_down": { "action": "scroll_vertical", "direction": [0, -1] },
       "zoom_in": { "action": "zoom", "direction": 1 },
-      "zoom_out": { "action": "zoom", "direction": -1 }
+      "zoom_out": { "action": "zoom", "direction": -1 },
+      "pointer": { "action": "cursor_control", "direction": null }
     },
 
     "performance": {
@@ -45,5 +46,12 @@
       "show_fps_counter": true,
       "show_gesture_indicator": true
     }
+  },
+  "pointer_config": {
+    "cursor_sensitivity": 2.0,
+    "flick_threshold": 0.05,
+    "double_flick_window": 0.4,
+    "index_tip_landmark": 8,
+    "thumb_tip_landmark": 4
   }
 }

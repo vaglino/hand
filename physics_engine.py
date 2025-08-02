@@ -36,7 +36,7 @@ class TrackpadPhysicsEngine:
         self.max_scroll_velocity = 50.0
         self.max_zoom_velocity = 1
         self.scroll_dead_zone = 0.5
-        self.zoom_dead_zone = 0.002
+        self.zoom_dead_zone = 0.001
         self.last_update_time = time.time()
         self.scroll_accumulator = Vector2D()
         self.zoom_accumulator = 0.0
@@ -126,6 +126,14 @@ class GestureMotionExtractor:
         prev_palm = np.mean(self.landmark_history[-2][palm_indices], axis=0)
         velocity = current_palm - prev_palm
         return Vector2D(velocity[0] * 100, velocity[1] * 100)
+    
+    def get_thumb_velocity(self):
+        if len(self.landmark_history) < 2: return Vector2D()
+        thumb_indices = [4]
+        current_thumb = np.mean(self.landmark_history[-1][thumb_indices], axis=0)
+        prev_thumb = np.mean(self.landmark_history[-2][thumb_indices], axis=0)
+        velocity = current_thumb - prev_thumb
+        return Vector2D(velocity[0]*100, velocity[1]*100)
     
     def _calculate_spread_velocity(self):
         if len(self.landmark_history) < self.window_size: return 0.0

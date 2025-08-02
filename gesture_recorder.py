@@ -75,7 +75,8 @@ class TransitionAwareRecorder:
             'zoom_out': "Pinch fingers together, then return to neutral",
             'maximize_window': "Show an open hand, then return to neutral",
             'go_back': "Swipe hand to the left, then return to center",
-            'neutral': "Keep hand still in relaxed position"
+            'neutral': "Keep hand still in relaxed position",
+            'pointer': "Extend index finger to point, move tip in various directions, then retract to neutral."
         }
         
     def _process_result(self, result: vision.HandLandmarkerResult, output_image: mp.Image, timestamp_ms: int):
@@ -200,6 +201,8 @@ class TransitionAwareRecorder:
                 cv2.arrowedLine(frame, (center_x + 80, center_y), (center_x - 80, center_y), (0, 255, 0), 4, tipLength=0.3)
             elif 'maximize_window' in gesture_type:
                 cv2.putText(frame, "OPEN HAND", (center_x - 80, center_y), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+            elif 'pointer' in gesture_type:
+                cv2.putText(frame, "Extend Index & Move", (center_x - 100, center_y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
         # Guide for returning to neutral
         elif phase == GesturePhase.TRANSITIONING_TO_NEUTRAL:
              cv2.putText(frame, "Return to Center", (center_x - 100, center_y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 150, 0), 2)
@@ -318,7 +321,8 @@ class TransitionAwareRecorder:
                 ord('3'): 'zoom_in', ord('4'): 'zoom_out',
                 ord('5'): 'neutral',
                 ord('6'): 'maximize_window',
-                ord('7'): 'go_back'
+                ord('7'): 'go_back',
+                ord('8'): 'pointer'
             }
             if key in gesture_map and not self.is_recording:
                 self._start_guided_recording(gesture_map[key])
