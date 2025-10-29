@@ -1,0 +1,2 @@
+"""Detection wrappers (MediaPipe hands)."""
+
