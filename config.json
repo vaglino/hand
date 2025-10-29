@@ -5,22 +5,28 @@
     
     "gesture_recognition": {
       "sequence_length": 15,
-      "check_interval_frames": 5,
-      "min_confidence_threshold": 0.70
+      "check_interval_frames": 1,
+      "min_confidence_threshold": 0.80
     },
     
     "physics_engine": {
       "scroll": {
         "base_sensitivity": 1.0,
-        "acceleration_factor": 2.5,
-        "friction_coefficient": 0.92,
+        "acceleration_factor": 2.0,
+        "friction_coefficient": 0.88,
         "max_velocity": 50.0
       },
       "zoom": {
-        "base_sensitivity": 1.0,
-        "acceleration_factor": 0.015,
-        "friction_coefficient": 0.88,
+        "base_sensitivity": 3.0,
+        "acceleration_factor": 15.0,
+        "friction_coefficient": 0.90,
         "max_velocity": 0.5
+      },
+      "pointer": {
+        "input_scale": 100,
+        "acceleration_factor": 120.0,
+        "friction_coefficient": 0.88,
+        "max_velocity": 3000.0
       }
     },
     
@@ -33,16 +39,24 @@
       "scroll_up": { "action": "scroll_vertical", "direction": [0, 1] },
       "scroll_down": { "action": "scroll_vertical", "direction": [0, -1] },
       "zoom_in": { "action": "zoom", "direction": 1 },
-      "zoom_out": { "action": "zoom", "direction": -1 }
+      "zoom_out": { "action": "zoom", "direction": -1 },
+      "pointer": { "action": "cursor_control", "direction": null }
     },
 
     "performance": {
-      "target_fps": 30
+      "target_fps": 50,
+      "camera_index": 0
     },
 
     "ui_preferences": {
       "show_fps_counter": true,
       "show_gesture_indicator": true
     }
+  },
+  "pointer_config": {
+    "flick_threshold": 0.05,
+    "double_flick_window": 0.4,
+    "index_tip_landmark": 8,
+    "thumb_tip_landmark": 4
   }
 }

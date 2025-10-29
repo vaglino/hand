@@ -4,7 +4,6 @@ import json
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
@@ -15,253 +14,24 @@ import os
 import warnings
 import seaborn as sns
 import matplotlib.pyplot as plt
-from scipy.spatial import procrustes
-from scipy.signal import butter, filtfilt
 import math
 from typing import List, Tuple, Optional
 import time
+import platform
 
 warnings.filterwarnings('ignore')
 
-# Move device detection inside main() to avoid repeated prints
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+if torch.cuda.is_available():
+    device = torch.device('cuda')
+elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+    # Check for MPS (Apple Silicon GPU)
+    device = torch.device('mps')
+else:
+    device = torch.device('cpu')
 
-# --- ADVANCED PREPROCESSING MODULE ---
-class LandmarkPreprocessor:
-    """Advanced landmark preprocessing with Procrustes alignment and filtering."""
-    
-    def __init__(self, filter_order=1, cutoff_freq=0.3):
-        self.filter_order = filter_order
-        self.cutoff_freq = cutoff_freq
-        self.b, self.a = butter(filter_order, cutoff_freq, btype='low')
-        
-    def procrustes_align_sequence(self, landmarks_sequence: np.ndarray) -> np.ndarray:
-        """Apply Procrustes alignment to each frame against the first frame."""
-        if landmarks_sequence.shape[0] < 2:
-            return landmarks_sequence
-            
-        aligned_sequence = np.zeros_like(landmarks_sequence)
-        reference = landmarks_sequence[0]  # Use first frame as reference
-        aligned_sequence[0] = reference
-        
-        for i in range(1, len(landmarks_sequence)):
-            # Procrustes alignment: removes translation, scale, and rotation
-            _, aligned_frame, _ = procrustes(reference, landmarks_sequence[i])
-            aligned_sequence[i] = aligned_frame
-            
-        return aligned_sequence
-    
-    def apply_temporal_filter(self, landmarks_sequence: np.ndarray) -> np.ndarray:
-        """Apply Butterworth filter to reduce jitter in landmark positions."""
-        if landmarks_sequence.shape[0] < 4:  # Need minimum frames for filtering
-            return landmarks_sequence
-            
-        filtered_sequence = np.zeros_like(landmarks_sequence)
-        
-        # Filter each landmark coordinate independently
-        for landmark_idx in range(landmarks_sequence.shape[1]):
-            for coord_idx in range(landmarks_sequence.shape[2]):
-                signal = landmarks_sequence[:, landmark_idx, coord_idx]
-                filtered_signal = filtfilt(self.b, self.a, signal)
-                filtered_sequence[:, landmark_idx, coord_idx] = filtered_signal
-                
-        return filtered_sequence
-    
-    def compute_finger_angles(self, landmarks: np.ndarray) -> np.ndarray:
-        """Compute angles between finger segments for richer geometric features."""
-        # Finger landmark indices: thumb, index, middle, ring, pinky
-        finger_tips = [4, 8, 12, 16, 20]
-        finger_bases = [2, 5, 9, 13, 17]
-        
-        angles = []
-        for i, (tip, base) in enumerate(zip(finger_tips, finger_bases)):
-            # Vector from base to tip
-            finger_vec = landmarks[tip] - landmarks[base]
-            
-            # Angle with respect to palm normal (wrist to middle finger base)
-            palm_vec = landmarks[9] - landmarks[0]
-            
-            # Calculate angle (handling potential division by zero)
-            dot_product = np.dot(finger_vec[:2], palm_vec[:2])  # Use 2D projection
-            norms = np.linalg.norm(finger_vec[:2]) * np.linalg.norm(palm_vec[:2])
-            
-            if norms > 1e-6:
-                angle = np.arccos(np.clip(dot_product / norms, -1.0, 1.0))
-            else:
-                angle = 0.0
-                
-            angles.append(angle)
-            
-        return np.array(angles)
-    
-    def extract_advanced_features(self, landmarks_sequence: List) -> Optional[np.ndarray]:
-        """Extract advanced features with Procrustes alignment and multi-temporal derivatives."""
-        sequence = np.array(landmarks_sequence)
-        if sequence.ndim != 3 or sequence.shape[1:] != (21, 3):
-            return None
-            
-        # Step 1: Apply temporal filtering to reduce jitter
-        filtered_sequence = self.apply_temporal_filter(sequence)
-        
-        # Step 2: Procrustes alignment for scale/rotation invariance
-        aligned_sequence = self.procrustes_align_sequence(filtered_sequence)
-        
-        # Step 3: Normalize relative to wrist
-        wrist = aligned_sequence[:, 0:1, :]
-        relative_landmarks = (aligned_sequence - wrist).reshape(aligned_sequence.shape[0], -1)
-        
-        # Step 4: Multi-temporal velocity features (Δt = 1, 2, 3)
-        velocities_1 = np.diff(relative_landmarks, axis=0, prepend=np.zeros((1, relative_landmarks.shape[1])))
-        
-        velocities_2 = np.zeros_like(velocities_1)
-        if len(relative_landmarks) >= 3:
-            velocities_2[2:] = relative_landmarks[2:] - relative_landmarks[:-2]
-            
-        velocities_3 = np.zeros_like(velocities_1)
-        if len(relative_landmarks) >= 4:
-            velocities_3[3:] = relative_landmarks[3:] - relative_landmarks[:-3]
-        
-        # Step 5: Finger angle features for each frame
-        angle_features = []
-        for frame_landmarks in aligned_sequence:
-            angles = self.compute_finger_angles(frame_landmarks)
-            angle_features.append(angles)
-        angle_features = np.array(angle_features)
-        
-        # Step 6: Combine all features
-        features = np.concatenate([
-            relative_landmarks,    # Position features
-            velocities_1,         # 1-frame velocity
-            velocities_2,         # 2-frame velocity  
-            velocities_3,         # 3-frame velocity
-            angle_features        # Finger angle features
-        ], axis=1)
-        
-        return features
+from hand.features.landmarks import LandmarkPreprocessor
 
-# --- TEMPORAL CONVOLUTIONAL NETWORK (TCN) ---
-class TemporalBlock(nn.Module):
-    """Single temporal block with dilated convolution and residual connection."""
-    
-    def __init__(self, n_inputs, n_outputs, kernel_size, stride, dilation, dropout=0.2):
-        super().__init__()
-        # Calculate causal padding (only pad left side)
-        self.padding = (kernel_size - 1) * dilation
-        
-        self.conv1 = nn.Conv1d(n_inputs, n_outputs, kernel_size, stride=stride, 
-                              padding=0, dilation=dilation)  # No padding, we'll pad manually
-        self.bn1 = nn.BatchNorm1d(n_outputs)
-        self.dropout1 = nn.Dropout(dropout)
-        
-        self.conv2 = nn.Conv1d(n_outputs, n_outputs, kernel_size, stride=stride,
-                              padding=0, dilation=dilation)  # No padding, we'll pad manually
-        self.bn2 = nn.BatchNorm1d(n_outputs)
-        self.dropout2 = nn.Dropout(dropout)
-        
-        # Residual connection
-        self.downsample = nn.Conv1d(n_inputs, n_outputs, 1) if n_inputs != n_outputs else None
-        
-    def forward(self, x):
-        # Apply causal padding (pad only the left side)
-        if self.padding > 0:
-            x = F.pad(x, (self.padding, 0))
-        
-        # First conv block
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = F.relu(out)
-        out = self.dropout1(out)
-        
-        # Apply causal padding again for second conv
-        if self.padding > 0:
-            out = F.pad(out, (self.padding, 0))
-        
-        # Second conv block
-        out = self.conv2(out)
-        out = self.bn2(out)
-        out = F.relu(out)
-        out = self.dropout2(out)
-        
-        # Prepare residual - ensure same size as output
-        if self.downsample is not None:
-            # Apply same causal padding to input for residual
-            if self.padding > 0:
-                x_padded = F.pad(x, (self.padding, 0))
-            else:
-                x_padded = x
-            res = self.downsample(x_padded)
-            # Crop to match output size
-            if res.size(2) > out.size(2):
-                res = res[:, :, :out.size(2)]
-        else:
-            res = x
-            # Crop residual to match output size if needed
-            if res.size(2) > out.size(2):
-                res = res[:, :, :out.size(2)]
-        
-        return F.relu(out + res)
-
-class TemporalConvNet(nn.Module):
-    """Temporal Convolutional Network for gesture classification."""
-    
-    def __init__(self, num_inputs, num_channels, kernel_size=3, dropout=0.2):
-        super().__init__()
-        layers = []
-        num_levels = len(num_channels)
-        
-        for i in range(num_levels):
-            dilation_size = 2 ** i
-            in_channels = num_inputs if i == 0 else num_channels[i-1]
-            out_channels = num_channels[i]
-            
-            layers.append(TemporalBlock(in_channels, out_channels, kernel_size, 
-                                      stride=1, dilation=dilation_size, 
-                                      dropout=dropout))
-            
-        self.network = nn.Sequential(*layers)
-        
-    def forward(self, x):
-        return self.network(x)
-
-class EnhancedGestureClassifier(nn.Module):
-    """Enhanced gesture classifier using TCN architecture."""
-    
-    def __init__(self, input_size, num_classes, dropout=0.3):
-        super().__init__()
-        
-        # TCN layers with increasing receptive field
-        tcn_channels = [64, 96, 128, 160]
-        self.tcn = TemporalConvNet(input_size, tcn_channels, kernel_size=3, dropout=dropout)
-        
-        # Global attention pooling
-        self.attention = nn.Sequential(
-            nn.Linear(tcn_channels[-1], 64),
-            nn.Tanh(),
-            nn.Linear(64, 1)
-        )
-        
-        # Final classifier
-        self.classifier = nn.Sequential(
-            nn.Linear(tcn_channels[-1], 128),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(128, num_classes)
-        )
-        
-    def forward(self, x):
-        # x shape: (batch_size, seq_len, features)
-        x = x.transpose(1, 2)  # (batch_size, features, seq_len)
-        
-        # TCN processing
-        tcn_out = self.tcn(x)  # (batch_size, channels, seq_len)
-        tcn_out = tcn_out.transpose(1, 2)  # (batch_size, seq_len, channels)
-        
-        # Attention pooling
-        attention_weights = F.softmax(self.attention(tcn_out), dim=1)
-        context = torch.sum(attention_weights * tcn_out, dim=1)
-        
-        # Classification
-        return self.classifier(context)
+from hand.models.tcn import EnhancedGestureClassifier
 
 # --- DATA AUGMENTATION ---
 class GestureAugmentator:
@@ -333,7 +103,10 @@ class EnhancedGestureDataset(Dataset):
             self.labels = torch.LongTensor(labels)
     
     def _create_balanced_dataset(self, augment_factor):
-        """Create balanced dataset with augmentation for minority classes."""
+        """Create balanced dataset with augmentation for minority classes.
+
+        Oversamples each class up to the max class count to balance the dataset.
+        """
         label_counts = Counter(self.original_labels)
         max_count = max(label_counts.values())
         
@@ -350,7 +123,8 @@ class EnhancedGestureDataset(Dataset):
         # Balance classes with augmentation
         for label, sequences in label_to_sequences.items():
             current_count = len(sequences)
-            target_count = min(max_count, current_count * augment_factor)
+            # Target exactly the maximum class count for balance
+            target_count = max_count
             
             # Add original sequences
             augmented_sequences.extend(sequences)
@@ -366,7 +140,7 @@ class EnhancedGestureDataset(Dataset):
                     augmented_sequences.append(aug_seq)
                     augmented_labels.append(label)
         
-        return torch.FloatTensor(augmented_sequences), torch.LongTensor(augmented_labels)
+        return torch.FloatTensor(np.array(augmented_sequences)), torch.LongTensor(augmented_labels)
     
     def __len__(self):
         return len(self.sequences)
@@ -375,11 +149,12 @@ class EnhancedGestureDataset(Dataset):
         return self.sequences[idx], self.labels[idx]
 
 # --- TRAINING WITH ENHANCED FEATURES ---
-def train_enhanced_model(model, train_loader, val_loader, class_weights, num_epochs=40):
+def train_enhanced_model(model, train_loader, val_loader, class_weights, num_epochs=120):
     """Train the enhanced model with advanced techniques."""
     weights_tensor = torch.FloatTensor(class_weights).to(device)
-    criterion = nn.CrossEntropyLoss(weight=weights_tensor, label_smoothing=0.1)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.01)
+    # Reduce label smoothing for sharper decision boundaries
+    criterion = nn.CrossEntropyLoss(weight=weights_tensor, label_smoothing=0.05)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.005)
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer, max_lr=0.003, epochs=num_epochs, steps_per_epoch=len(train_loader)
     )
@@ -463,23 +238,18 @@ def main():
     print("Applying advanced preprocessing...")
     start_time = time.time()
     sequences = []
+    labels = []
     for i, seq in enumerate(data['sequences']):
-        if i % 100 == 0:
-            print(f"Processing sequence {i+1}/{len(data['sequences'])}")
+        if (i + 1) % 200 == 0:
+            print(f"  ... processing sequence {i+1}/{len(data['sequences'])}")
         features = preprocessor.extract_advanced_features(seq)
         if features is not None:
             sequences.append(features)
-        else:
-            sequences.append(None)
+            labels.append(data['labels'][i])
     
     print(f"Preprocessing completed in {time.time() - start_time:.2f} seconds")
     
-    labels = data['labels']
-    
-    # Filter out malformed data
-    valid_indices = [i for i, seq in enumerate(sequences) if seq is not None]
-    X = np.array([sequences[i] for i in valid_indices])
-    labels = [labels[i] for i in valid_indices]
+    X = np.array(sequences)
     
     if len(X) == 0:
         print("Error: No valid sequences found. Please re-record.")
@@ -523,8 +293,11 @@ def main():
     train_dataset = EnhancedGestureDataset(X_train_scaled, y_train, augment=True, augment_factor=3)
     val_dataset = EnhancedGestureDataset(X_val_scaled, y_val, augment=False)
     
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=2)
-    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=2)
+    # Set num_workers=0 on macOS to avoid multiprocessing issues with some PyTorch versions
+    num_workers = 0 if platform.system() == 'Darwin' else 2
+    print(f"Using {num_workers} workers for DataLoader.")
+    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=num_workers)
+    val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, num_workers=num_workers)
     
     print(f"Training set expanded to {len(train_dataset)} samples with augmentation")
     
