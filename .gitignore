@@ -1,0 +1,89 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# Data directories - exclude all gesture data
+gesture_data/
+gesture_data_v01/
+gesture_data_v02/
+gesture_data*/
+
+# Model files - exclude all trained models and weights
+*.h5
+*.pth
+*.pt
+*.ckpt
+*.pkl
+*.task
+*.weights
+*.pb
+*.onnx
+
+# Backup and archive files
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+Backup*.zip
+*backup*.zip
+
+# Images and media files
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+*.svg
+*.ico
+*.mp4
+*.avi
+*.mov
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Jupyter Notebooks checkpoints
+.ipynb_checkpoints/
+
+# Python version file (optional - uncomment if you don't want to track it)
+# .python-version
