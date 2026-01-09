@@ -4,6 +4,7 @@ import numpy as np
 from typing import Optional
 
 from hand.models.tcn import EnhancedGestureClassifier
+from hand.models.lightweight_cnn import LightweightCNN
 
 try:
     import onnxruntime as ort  # noqa: F401
@@ -60,13 +61,19 @@ class OptimizedInferenceEngine:
 
         # Fallback to PyTorch model
         if os.path.exists(pytorch_path):
-            print("📦 Loading PyTorch TCN model...")
             checkpoint = torch.load(pytorch_path, map_location=self.device)
+            model_type = checkpoint.get("model_type", "tcn")  # Default to TCN for backwards compatibility
 
-            # Create the enhanced TCN model
-            self.model = EnhancedGestureClassifier(
-                input_size=checkpoint["input_size"], num_classes=checkpoint["num_classes"]
-            ).to(self.device)
+            if model_type == "lightweight_cnn":
+                print("📦 Loading PyTorch LightweightCNN model...")
+                self.model = LightweightCNN(
+                    input_size=checkpoint["input_size"], num_classes=checkpoint["num_classes"]
+                ).to(self.device)
+            else:
+                print("📦 Loading PyTorch TCN model...")
+                self.model = EnhancedGestureClassifier(
+                    input_size=checkpoint["input_size"], num_classes=checkpoint["num_classes"]
+                ).to(self.device)
 
             self.model.load_state_dict(checkpoint["model_state"])
             self.model.eval()
@@ -75,7 +82,7 @@ class OptimizedInferenceEngine:
             self.input_size = checkpoint["input_size"]
             self.sequence_length = checkpoint["sequence_length"]
 
-            print("✅ PyTorch TCN model loaded successfully")
+            print(f"✅ PyTorch {model_type} model loaded successfully")
             return
 
         raise FileNotFoundError("❌ No trained model found. Please run enhanced training first.")

@@ -1,0 +1,8 @@
+{
+  "LightweightCNNv3": {
+    "accuracy": 92.85132382892057,
+    "parameters": 121774,
+    "inference_ms": 0.29648750089108944,
+    "train_time_s": 140.98501682281494
+  }
+}
